@@ -1,0 +1,149 @@
+# ---------------------------------------------------------------------------
+# Paul FDE Agent — model routing policy
+#
+# This file answers one question: "for THIS kind of task, which model runs it?"
+#
+# Why this file exists: the Hermes runtime routes its own *auxiliary* work
+# (context compression, vision, title generation) to configurable models, but
+# it has no notion of "this user request is a coding task, send it to the
+# strong model". That classification is ours. See docs/adr/0002-model-routing.md
+#
+# Nothing here is secret. Credentials live in .env and are referenced by NAME
+# via `api_key_env`. Never inline a key in this file.
+# ---------------------------------------------------------------------------
+version: 1
+
+# --- Backends --------------------------------------------------------------
+# Both are OpenAI-compatible endpoints. `${VAR:-default}` substitution is
+# applied at load time from the process environment.
+providers:
+  local:
+    base_url: "${PFA_LOCAL_BASE_URL:-http://localhost:11434/v1}"
+    api_key_env: PFA_LOCAL_API_KEY
+    default_model: "gemma4:e4b"
+    # Self-hosted: no per-token billing. Electricity and the VPS are fixed cost.
+    cost_per_1m_input_tokens: 0.0
+    cost_per_1m_output_tokens: 0.0
+
+  cloud:
+    base_url: "${PFA_CLOUD_BASE_URL:-https://openrouter.ai/api/v1}"
+    api_key_env: PFA_CLOUD_API_KEY
+    default_model: "anthropic/claude-sonnet-4.5"
+    # PLACEHOLDER PRICING — verify against your provider's current price list
+    # before trusting any cost figure this project reports. USD per 1M tokens.
+    cost_per_1m_input_tokens: 3.00
+    cost_per_1m_output_tokens: 15.00
+
+# Task category used when classification finds no match.
+default_task: simple
+
+# --- Routing table ---------------------------------------------------------
+# `model: null` means "use the provider's default_model".
+routes:
+  simple:
+    provider: local
+    model: "gemma4:e2b"
+    description: Short factual questions, reformatting, quick lookups.
+
+  summarization:
+    provider: local
+    model: "gemma4:e4b"
+    description: Condensing documents, logs, meeting notes, threads.
+
+  research:
+    provider: local
+    model: "gemma4:e4b"
+    description: Web research, competitor and market analysis, veille.
+
+  debugging:
+    provider: local
+    model: "gemma4:26b"
+    description: Log analysis, error triage, reproduction of reported defects.
+
+  coding:
+    provider: cloud
+    model: null
+    description: Writing, refactoring and reviewing code; test authoring.
+
+  architecture:
+    provider: cloud
+    model: null
+    description: System design, trade-off analysis, technical decision records.
+
+# --- Classification --------------------------------------------------------
+# Deliberately a keyword matcher, not an LLM classifier. An LLM classifier adds
+# a model call, latency and a failure mode to every single request in order to
+# pick between six buckets. Rules are inspectable, free, instant and
+# deterministic — and `pfa run --task <name>` always overrides them.
+# Trade-off accepted and revisitable: see docs/adr/0002-model-routing.md
+#
+# Rules are evaluated in order; first match wins. Matching is case-insensitive
+# on word boundaries against the task text.
+classification:
+  rules:
+    - task: architecture
+      keywords:
+        - architecture
+        - design a
+        - trade-off
+        - tradeoff
+        - system design
+        - scalability
+        - should we use
+        - adr
+
+    - task: coding
+      keywords:
+        - implement
+        - refactor
+        - write a function
+        - write tests
+        - unit test
+        - pull request
+        - fix the bug
+        - patch
+        - migration
+        - code review
+        # Repository analysis is code comprehension plus judgement. Routed to the
+        # strong model deliberately: the smallest model gives shallow answers on
+        # "what are the highest-value improvements here", which is the whole task.
+        - repository
+        - repo
+        - codebase
+
+    - task: debugging
+      keywords:
+        - debug
+        - stack trace
+        - traceback
+        - error
+        - exception
+        - failing
+        - crash
+        - root cause
+        - why is
+        - logs
+
+    - task: research
+      keywords:
+        - research
+        - compare
+        - competitor
+        - landscape
+        - state of the art
+        - latest
+        - market
+        - who are
+        - benchmark
+
+    - task: summarization
+      keywords:
+        - summarize
+        - summarise
+        - tldr
+        - recap
+        - digest
+        - brief me
+        - briefing
+        - roundup
+        - key points

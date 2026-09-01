@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paul-fde-agent"
+version = "0.1.0"
+description = "A self-hosted Forward Deployed Engineer agent built on the Hermes Agent runtime."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<3.14"
+keywords = ["agent", "hermes", "mcp", "llm", "fde", "model-routing"]
+
+# ---------------------------------------------------------------------------
+# Dependency policy: every runtime dependency must earn its place.
+# Phase 1 ships with exactly ONE.
+#
+#   PyYAML  -> the routing policy and the Hermes config are both YAML. Parsing
+#              YAML by hand is not reasonable. Hermes itself uses YAML config,
+#              so this aligns us with the runtime we sit on.
+#
+# Deliberately NOT taken:
+#   click/typer -> argparse (stdlib) covers our subcommands. See docs/adr/0004.
+#   pydantic    -> our config is ~40 keys; a hand-written validator that emits
+#                  FDE-grade error messages is smaller than the dependency.
+#   requests    -> urllib (stdlib) is enough for a healthcheck GET.
+#   rich        -> cosmetic only; Hermes owns the interactive UI.
+# ---------------------------------------------------------------------------
+dependencies = [
+    "PyYAML>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+# The agent runtime. Kept optional so `pfa doctor` and the whole test suite run
+# in CI without pulling the full Hermes dependency tree.
+#
+# Version note (verified 2026-09-01): the Hermes GitHub repo is at v0.21.0
+# (tag v2026.8.31) while PyPI publishes 0.19.0. There is no Hermes 2.x.
+# We pin to the published PyPI range and let `pfa doctor` report the actual
+# resolved version at runtime.
+hermes = ["hermes-agent>=0.19.0,<0.22.0"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+pfa = "pfa.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

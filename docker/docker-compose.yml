@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# Paul FDE Agent — self-hosted stack
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Secrets come from the .env file at the repository root. That file is
+# gitignored; start from .env.example. No credential appears in this file.
+#
+# Sizing warning: `ollama` here runs on CPU. A small VPS will run gemma4:e2b
+# and e4b acceptably; it will NOT run the 26B or 31B variants at usable speed.
+# Route those task categories to the cloud provider, or attach a GPU. See
+# docs/deployment.md.
+# ---------------------------------------------------------------------------
+name: paul-fde-agent
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pfa-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Not published to the host by default: the agent reaches it over the
+    # compose network. Publish it only if you need external access, and then
+    # put it behind authentication.
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: pfa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pfa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-pfa}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pfa} -d ${POSTGRES_DB:-pfa}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pfa-agent
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside the network Ollama is addressed by service name, not localhost.
+      PFA_LOCAL_BASE_URL: http://ollama:11434/v1
+      PFA_LOCAL_API_KEY: ${PFA_LOCAL_API_KEY:-ollama}
+      PFA_CLOUD_BASE_URL: ${PFA_CLOUD_BASE_URL:-https://openrouter.ai/api/v1}
+      PFA_CLOUD_API_KEY: ${PFA_CLOUD_API_KEY:-}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-pfa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pfa}
+      HERMES_HOME: /data/hermes
+      PFA_LOG_DIR: /data/logs
+    volumes:
+      - agent-data:/data
+      # Skills are read-only to the container: the agent should not silently
+      # rewrite its own procedures on the host.
+      - ../skills:/app/skills:ro
+      - ../config:/app/config:ro
+    # Keep a shell open so `docker compose exec agent pfa run "..."` works.
+    entrypoint: ["sleep", "infinity"]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ollama-models:
+  postgres-data:
+  agent-data:
