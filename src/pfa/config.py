@@ -73,12 +73,19 @@ class Provider:
 
 @dataclass(frozen=True)
 class Route:
-    """A task category bound to a provider and (optionally) a specific model."""
+    """A task category bound to a provider, a model, and its standing procedures.
+
+    ``skills`` names the procedures preloaded for every task in this category.
+    They are validated against the library at use time, not here: the policy is
+    a document about intent, and a config loader that reaches into the
+    filesystem cannot be a pure function of the file it was handed.
+    """
 
     task: str
     provider: str
     model: str | None = None
     description: str = ""
+    skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,11 +175,15 @@ def _parse_routes(raw: dict[str, Any], providers: dict[str, Provider]) -> dict[s
                 f"`routes.{task}.provider` is {provider!r}, which is not a defined "
                 f"provider. Defined providers: {known}."
             )
+        skills = spec.get("skills") or []
+        if not isinstance(skills, list) or not all(isinstance(s, str) for s in skills):
+            raise ConfigError(f"`routes.{task}.skills` must be a list of skill names.")
         routes[task] = Route(
             task=task,
             provider=provider,
             model=spec.get("model") or None,
             description=spec.get("description", ""),
+            skills=tuple(skills),
         )
     return routes
 

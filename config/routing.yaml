@@ -39,36 +39,54 @@ default_task: simple
 
 # --- Routing table ---------------------------------------------------------
 # `model: null` means "use the provider's default_model".
+#
+# `skills:` names the procedures preloaded for that category, by directory name
+# under skills/. They are passed to `hermes chat --skills`; `pfa route` shows
+# them before anything runs, and `pfa run --no-auto-skills` suppresses them.
+#
+# A skill is attached here only if it applies to the WHOLE category. Anything
+# narrower stays explicit (`pfa run --skill <name>`), because a procedure loaded
+# for every task in a category and relevant to a tenth of them is context spent
+# to make the model less focused. See docs/adr/0005-skill-library.md
 routes:
   simple:
     provider: local
     model: "gemma4:e2b"
     description: Short factual questions, reformatting, quick lookups.
+    # Deliberately none: the cheapest route stays the cheapest route.
+    skills: []
 
   summarization:
     provider: local
     model: "gemma4:e4b"
     description: Condensing documents, logs, meeting notes, threads.
+    skills: [technical-writing]
 
   research:
     provider: local
     model: "gemma4:e4b"
     description: Web research, competitor and market analysis, veille.
+    skills: [technical-research]
 
   debugging:
     provider: local
     model: "gemma4:26b"
     description: Log analysis, error triage, reproduction of reported defects.
+    skills: [fde-methodology]
 
   coding:
     provider: cloud
     model: null
     description: Writing, refactoring and reviewing code; test authoring.
+    skills: [github-workflow]
 
   architecture:
     provider: cloud
     model: null
     description: System design, trade-off analysis, technical decision records.
+    # An ADR is a written artefact before it is a technical one, and the
+    # "consequences accepted" section is the one people omit.
+    skills: [technical-writing]
 
 # --- Classification --------------------------------------------------------
 # Deliberately a keyword matcher, not an LLM classifier. An LLM classifier adds
@@ -110,6 +128,14 @@ classification:
         - repository
         - repo
         - codebase
+        # Phase 2: these phrasings reach `github-workflow`. Note what is NOT
+        # here — bare "issue" and "report" are ordinary English words that would
+        # hijack debugging and summarization tasks, and coding is evaluated
+        # first, so a greedy keyword here is expensive.
+        - github
+        - open a pr
+        - branch
+        - commit
 
     - task: debugging
       keywords:
@@ -123,6 +149,12 @@ classification:
         - root cause
         - why is
         - logs
+        # Integration-shaped failures. Pair with `--skill api-integration`,
+        # which is not auto-attached: see docs/adr/0005-skill-library.md
+        - webhook
+        - timed out
+        - stopped working
+        - intermittent
 
     - task: research
       keywords:
@@ -135,6 +167,9 @@ classification:
         - market
         - who are
         - benchmark
+        - veille
+        - survey
+        - evaluate
 
     - task: summarization
       keywords:
@@ -147,3 +182,7 @@ classification:
         - briefing
         - roundup
         - key points
+        - draft
+        - write up
+        - handover
+        - client summary

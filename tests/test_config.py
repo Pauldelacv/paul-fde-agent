@@ -148,3 +148,39 @@ class TestShippedPolicy:
         body = (repo_root / "config" / "routing.yaml").read_text(encoding="utf-8")
         assert "api_key:" not in body, "policy must reference key NAMES, never values"
         assert "sk-" not in body
+
+
+class TestRouteSkills:
+    def test_skills_default_to_empty(self, policy_file):
+        assert load_config(policy_file).routes["simple"].skills == ()
+
+    def test_skills_are_read_in_policy_order(self, policy_with_skills):
+        assert load_config(policy_with_skills).routes["coding"].skills == (
+            "alpha-procedure",
+            "beta-procedure",
+        )
+
+    def test_a_non_list_is_rejected_with_the_key_named(self, tmp_path, policy_text):
+        broken = tmp_path / "broken.yaml"
+        broken.write_text(
+            policy_text.replace(
+                "  simple:\n    provider: local",
+                "  simple:\n    skills: nope\n    provider: local",
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError, match="`routes.simple.skills` must be a list"):
+            load_config(broken)
+
+    def test_the_loader_does_not_check_the_filesystem(self, tmp_path, policy_text):
+        # The policy is a document about intent. Whether a named skill exists is
+        # a question for `pfa doctor` and for the runner, not for the parser.
+        policy = tmp_path / "unknown-skill.yaml"
+        policy.write_text(
+            policy_text.replace(
+                "  simple:\n    provider: local",
+                "  simple:\n    skills: [does-not-exist]\n    provider: local",
+            ),
+            encoding="utf-8",
+        )
+        assert load_config(policy).routes["simple"].skills == ("does-not-exist",)

@@ -34,7 +34,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HERMES_HOME=/data/hermes \
     PFA_LOG_DIR=/data/logs \
-    PFA_CONFIG=/app/config/routing.yaml
+    PFA_CONFIG=/app/config/routing.yaml \
+    PFA_SKILLS_DIR=/app/skills
 
 WORKDIR /app
 

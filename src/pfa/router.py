@@ -28,6 +28,8 @@ class Decision:
     basis: str
     #: The keyword that matched, when basis == "keyword".
     matched_keyword: str | None = None
+    #: Procedures the policy attaches to this category, in policy order.
+    skills: tuple[str, ...] = ()
 
     @property
     def model_ref(self) -> str:
@@ -42,7 +44,10 @@ class Decision:
         else:
             why = "no rule matched; fell back to default_task"
         tier = "local (no per-token cost)" if self.provider.is_local else "cloud (billed)"
-        return f"{self.task} -> {self.model_ref} [{tier}] ({why})"
+        line = f"{self.task} -> {self.model_ref} [{tier}] ({why})"
+        if self.skills:
+            line += f" + skills: {', '.join(self.skills)}"
+        return line
 
 
 def _keyword_matches(text: str, keyword: str) -> bool:
@@ -68,8 +73,18 @@ def classify(text: str, config: Config) -> tuple[str, str, str | None]:
     return config.default_task, "default", None
 
 
-def route(text: str, config: Config, task: str | None = None) -> Decision:
-    """Resolve free-form task text (or an explicit category) to a Decision."""
+def route(
+    text: str,
+    config: Config,
+    task: str | None = None,
+    auto_skills: bool = True,
+) -> Decision:
+    """Resolve free-form task text (or an explicit category) to a Decision.
+
+    ``auto_skills=False`` drops the procedures the policy attaches to the
+    category. The category itself is unaffected: suppressing a skill must never
+    quietly change which model runs the task.
+    """
     if task:
         if task not in config.routes:
             known = ", ".join(sorted(config.routes))
@@ -88,6 +103,7 @@ def route(text: str, config: Config, task: str | None = None) -> Decision:
         model=model,
         basis=basis,
         matched_keyword=keyword,
+        skills=selected.skills if auto_skills else (),
     )
 
 

@@ -15,9 +15,12 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from .config import Config, load_config
 from .errors import ConfigError
 from .hermes import find_hermes, hermes_home, hermes_version
+from .skills import Library, discover, install_state
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
@@ -123,6 +126,148 @@ def check_providers(config: Config) -> list[Check]:
     return checks
 
 
+def _external_dirs_cover(home: Path, root: Path) -> tuple[bool, str]:
+    """Whether the rendered Hermes config points at ``root`` via ``skills.external_dirs``.
+
+    Reads the file rather than re-rendering it: what matters is what Hermes will
+    load, not what we would generate today. Returns ``(covered, detail)``; a
+    missing or unreadable config is simply "not covered", never an exception —
+    `pfa doctor` reports a broken environment, it does not fail inside one.
+    """
+    config_file = home / "config.yaml"
+    if not config_file.is_file():
+        return False, f"{config_file} not rendered yet"
+    try:
+        document = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        declared = ((document.get("skills") or {}).get("external_dirs")) or []
+    except (yaml.YAMLError, OSError, AttributeError):
+        return False, f"{config_file} could not be read"
+
+    target = root.expanduser().resolve()
+    for entry in declared:
+        try:
+            candidate = Path(os.path.expandvars(str(entry))).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        if candidate == target:
+            return True, f"hermes scans {target} in place (skills.external_dirs)"
+    if declared:
+        return False, f"{config_file} lists external_dirs, but not {target}"
+    return False, f"{config_file} declares no skills.external_dirs"
+
+
+def check_skills(config: Config | None, library: Library | None = None) -> list[Check]:
+    """Report the state of the skill library and whether the policy can reach it."""
+    resolved = library if library is not None else discover()
+    checks: list[Check] = []
+
+    if not resolved.root.is_dir():
+        checks.append(
+            Check(
+                "skill library",
+                SKIP,
+                f"{resolved.root} does not exist",
+                "Run from the repository root, or set PFA_SKILLS_DIR.",
+            )
+        )
+        return checks
+
+    if resolved.problems:
+        first = resolved.problems[0]
+        more = f" (+{len(resolved.problems) - 1} more)" if len(resolved.problems) > 1 else ""
+        checks.append(
+            Check(
+                "skill library",
+                FAIL,
+                f"{len(resolved.skills)} valid, {len(resolved.problems)} invalid — "
+                f"{first.path}: {first.message}{more}",
+                "pfa skills validate",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "skill library",
+                PASS if resolved.skills else WARN,
+                f"{resolved.root} — {len(resolved.skills)} skills, all well-formed"
+                if resolved.skills
+                else f"{resolved.root} contains no skills",
+                "" if resolved.skills else "Add a skill, or check PFA_SKILLS_DIR.",
+            )
+        )
+
+    # A policy naming a skill that does not exist fails at run time, on the run
+    # that mattered. Catch it here instead.
+    if config is not None:
+        referenced = {name for route in config.routes.values() for name in route.skills}
+        missing = sorted(referenced - set(resolved.names))
+        checks.append(
+            Check(
+                "policy skill references",
+                FAIL if missing else PASS,
+                f"{len(referenced)} referenced by routes; missing: {', '.join(missing)}"
+                if missing
+                else f"all {len(referenced)} skills named by routes resolve",
+                "Correct `routes.<task>.skills` in the policy, or add the skill."
+                if missing
+                else "",
+            )
+        )
+
+    # The silent failure this project exists not to have: a procedure edited in
+    # the repository that Hermes never loads. Two ways it can reach Hermes —
+    # scanned in place via `skills.external_dirs`, or copied by `pfa skills
+    # install` — and Hermes silently ignores an external dir that does not
+    # resolve, so "configured" is not the same as "working".
+    home = hermes_home()
+    if not resolved.skills:
+        return checks
+
+    scanned, detail = _external_dirs_cover(home, resolved.root)
+    if scanned:
+        return [*checks, Check("skills reachable by hermes", PASS, detail)]
+
+    if not (home / "skills").is_dir():
+        checks.append(
+            Check(
+                "skills reachable by hermes",
+                SKIP,
+                f"{detail}; {home / 'skills'} does not exist either",
+                "pfa hermes-config --write  (preferred), or pfa skills install",
+            )
+        )
+        return checks
+
+    _, missing_install, stale = install_state(resolved, home)
+    # Fall through to the copy: this is the `pfa skills install` path.
+    if missing_install or stale:
+        detail = []
+        if missing_install:
+            names = ", ".join(s.name for s in missing_install)
+            detail.append(f"{len(missing_install)} not installed: {names}")
+        if stale:
+            detail.append(
+                f"{len(stale)} differ from the repository: {', '.join(s.name for s in stale)}"
+            )
+        checks.append(
+            Check(
+                "skills reachable by hermes",
+                WARN,
+                "; ".join(detail),
+                "pfa skills install  (Hermes loads its own copy, not this repository's)",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "skills reachable by hermes",
+                PASS,
+                f"{home / 'skills'} matches the repository ({len(resolved.skills)} skills)",
+            )
+        )
+    return checks
+
+
 def check_secret_hygiene(root: Path | None = None) -> list[Check]:
     """Confirm the repository is not about to leak credentials."""
     base = root or Path.cwd()
@@ -194,6 +339,7 @@ def run_all(config_path: str | None = None) -> list[Check]:
     if config is not None:
         checks += check_providers(config)
     checks += check_hermes_home()
+    checks += check_skills(config)
     checks += check_secret_hygiene()
     return checks
 

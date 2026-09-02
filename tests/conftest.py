@@ -30,6 +30,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PFA_LOCAL_API_KEY",
         "PFA_CLOUD_BASE_URL",
         "PFA_CLOUD_API_KEY",
+        "PFA_SKILLS_DIR",
         "HERMES_HOME",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -79,6 +80,66 @@ def policy_text() -> str:
 def policy_file(tmp_path: Path, policy_text: str) -> Path:
     path = tmp_path / "routing.yaml"
     path.write_text(policy_text, encoding="utf-8")
+    return path
+
+
+def write_skill(
+    root: Path,
+    name: str,
+    category: str = "fde",
+    version: str = "1.0.0",
+    description: str = "A throwaway procedure.",
+    body: str = "# Procedure\n\nDo the thing, then check it.\n",
+    frontmatter_name: str | None = None,
+) -> Path:
+    """Create one SKILL.md under ``root``. Returns the file written."""
+    directory = root / category / name
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "SKILL.md"
+    path.write_text(
+        "---\n"
+        f"name: {frontmatter_name or name}\n"
+        f"description: {description}\n"
+        f"version: {version}\n"
+        "metadata:\n"
+        "  hermes:\n"
+        "    tags: [test]\n"
+        f"    category: {category}\n"
+        "---\n\n" + body,
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway skill library, independent of the one this repository ships."""
+    root = tmp_path / "skills"
+    write_skill(root, "alpha-procedure")
+    write_skill(root, "beta-procedure")
+    monkeypatch.setenv("PFA_SKILLS_DIR", str(root))
+    return root
+
+
+@pytest.fixture
+def policy_with_skills(tmp_path: Path, policy_text: str) -> Path:
+    """The throwaway policy, with procedures attached to two of its routes.
+
+    Kept separate from `policy_file` so the routing tests stay independent of
+    whether a skill library exists at all.
+    """
+    text = policy_text
+    for anchor, attached in (
+        ("  research:\n    provider: local\n    model: null", "[alpha-procedure]"),
+        ("  coding:\n    provider: cloud\n    model: null", "[alpha-procedure, beta-procedure]"),
+    ):
+        # Assert rather than replace-and-hope: a silently unmatched anchor would
+        # produce a policy with no skills and tests that pass for the wrong reason.
+        assert anchor in text, f"policy_text no longer contains:\n{anchor}"
+        text = text.replace(anchor, f"{anchor}\n    skills: {attached}")
+
+    path = tmp_path / "routing-with-skills.yaml"
+    path.write_text(text, encoding="utf-8")
     return path
 
 

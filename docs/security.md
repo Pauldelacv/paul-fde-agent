@@ -113,6 +113,37 @@ Treat any content the agent fetched as untrusted input, not as instruction.
 Raising autonomy to EXECUTE or EXTERNAL on a workflow that ingests third-party
 text meaningfully increases risk.
 
+## The skill library is executable policy
+
+Skills are the procedures the agent follows, so a skill the agent can edit is a
+policy the agent can rewrite. Two facts, both verified against the Hermes skills
+guide on 2026-09-02 (`verified-facts.md`):
+
+- **`skills.external_dirs` is not a write-protection boundary.** The rendered
+  Hermes config points at this repository's `skills/` directory. If the Hermes
+  process can write there, the agent's `skill_manage` actions can modify the
+  procedures — in a git working tree, where the change is easy to miss until
+  someone reads the diff.
+- **A non-existent external directory is silently skipped.** A typo in the path
+  does not produce an error; it produces an agent running with no procedures at
+  all, behaving plausibly and following none of them.
+
+What this project does about it:
+
+- The compose stack mounts `../skills:/app/skills:ro`. The read-only flag is
+  load-bearing, not decoration: it is what stops the agent editing its own
+  procedures on the deployed host.
+- `pfa doctor` verifies the configured path actually resolves to the library,
+  rather than trusting that it was configured.
+- `pfa skills validate` runs in `make check`, so a malformed procedure fails the
+  build rather than being quietly ignored at load time.
+- A test asserts no skill contains a credential, an absolute home directory or a
+  non-example hostname — skills are committed to a public repository, and client
+  detail leaking into one is a disclosure, not an untidiness.
+
+Running the agent as a user that cannot write to the checkout is the stronger
+form of the first control, and is what a deployment outside Docker should do.
+
 ## Deployment hardening
 
 - Run the container as non-root (the image does; UID 10001).

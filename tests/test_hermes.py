@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import yaml
 
 from pfa.config import load_config
@@ -103,3 +105,30 @@ class TestCommandConstruction:
         config = load_config(policy_file)
         command = build_command(route("x", config), "x", oneshot=False, quiet=False)
         assert "--oneshot" not in command and "--quiet" not in command
+
+
+class TestSkillsBlock:
+    """How the rendered config tells Hermes where the procedures live."""
+
+    def test_points_hermes_at_the_library_in_place(self, policy_file, tmp_path, monkeypatch):
+        root = tmp_path / "skills"
+        root.mkdir()
+        monkeypatch.setenv("PFA_SKILLS_DIR", str(root))
+        skills = render_config(load_config(policy_file))["skills"]
+        assert skills["enabled"] is True
+        assert skills["external_dirs"] == [str(root.resolve())]
+
+    def test_the_path_is_absolute(self, policy_file, monkeypatch, tmp_path):
+        # The agent's working directory is not ours, and Hermes silently skips
+        # an external dir that does not resolve.
+        monkeypatch.setenv("PFA_SKILLS_DIR", "skills")
+        [declared] = render_config(load_config(policy_file))["skills"]["external_dirs"]
+        assert Path(declared).is_absolute()
+
+    def test_the_rendered_file_carries_it(self, policy_file, tmp_path, monkeypatch):
+        root = tmp_path / "skills"
+        root.mkdir()
+        monkeypatch.setenv("PFA_SKILLS_DIR", str(root))
+        path = write_config(load_config(policy_file), home=tmp_path / "hermes")
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert document["skills"]["external_dirs"] == [str(root.resolve())]

@@ -6,13 +6,15 @@ model only when the task actually needs one.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-132%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-229%20passing-brightgreen.svg)](tests/)
 
-> **Status: Phase 1 (Foundation) complete.** The routing spine, CLI, Hermes
-> integration, Docker deployment, security tooling and test suite are working
-> and tested. The FDE skill library, MCP connectors, memory layer and scheduled
-> workflows are Phases 2–5 — see the [Roadmap](#roadmap). Nothing in this README
-> describes a feature that does not exist; where something is planned, it says so.
+> **Status: Phases 1–2 complete.** The routing spine, CLI, Hermes integration,
+> Docker deployment, security tooling and test suite work (Phase 1); the FDE
+> skill library — five procedures, attached to task categories by policy,
+> validated and installable — works (Phase 2). MCP connectors, the memory layer
+> and scheduled workflows are Phases 3–5 — see the [Roadmap](#roadmap). Nothing
+> in this README describes a feature that does not exist; where something is
+> planned, it says so.
 
 ---
 
@@ -28,7 +30,7 @@ client, memory, cron and approvals. This project supplies the piece Hermes does
 not have: **routing each task to the right model**, plus the FDE-specific
 skills, security posture and operational tooling around it.
 
-Roughly 1,300 lines of Python. That number is a design goal, not an accident.
+Roughly 2,000 lines of Python. That number is a design goal, not an accident.
 
 ## 2. Why it exists
 
@@ -88,11 +90,17 @@ alternatives and the trade-off accepted, is in
 
 ## 4. Features
 
-**Working now (Phase 1):**
+**Working now (Phases 1–2):**
 
 - **Task-category model routing** — six categories, keyword-classified,
   overridable, inspectable before a token is spent.
-- **`pfa route`** — shows the decision *and its basis* without running anything.
+- **Five FDE skills**, attached to task categories by the policy rather than
+  remembered by hand: debugging methodology, technical research, GitHub
+  workflow, API integration, technical writing.
+- **`pfa skills`** — list, inspect, validate and install the library; a mistyped
+  `--skill` fails before a token is spent, not silently.
+- **`pfa route`** — shows the decision, its basis *and the procedures it
+  attaches*, without running anything.
 - **`pfa doctor`** — full environment healthcheck with a remedy per failure;
   reports SKIP rather than PASS for anything it cannot verify.
 - **Four autonomy levels** mapped onto Hermes' real approval controls, with an
@@ -102,10 +110,10 @@ alternatives and the trade-off accepted, is in
   named volumes.
 - **Secret-leak prevention** — layered `.gitignore`, a shape-based scanner, and
   security tests that fail the build.
-- **132 tests**, no network access, no real credentials.
+- **229 tests**, no network access, no real credentials.
 
-**Planned:** FDE skill library, MCP connectors, persistent memory, scheduled
-workflows. See the [Roadmap](#roadmap).
+**Planned:** MCP connectors, persistent memory, scheduled workflows. See the
+[Roadmap](#roadmap).
 
 ## 5. Installation
 
@@ -125,10 +133,11 @@ Requires Python 3.11–3.13 (the range Hermes supports).
 
 ```bash
 make install     # dev dependencies only, no Hermes runtime
-make test        # 132 tests, ~1s, no network
+make test        # 229 tests, ~1s, no network
 make lint        # ruff check + format check
 make check       # everything CI runs
 make doctor
+make skills          # list the skill library
 make secrets-check   # run before every push
 ```
 
@@ -174,22 +183,25 @@ slow on a small VPS**. Change that route to `e4b` or to `cloud` — see
 
 ```yaml
 routes:
-  simple:         { provider: local, model: "gemma4:e2b" }
-  summarization:  { provider: local, model: "gemma4:e4b" }
-  research:       { provider: local, model: "gemma4:e4b" }
-  debugging:      { provider: local, model: "gemma4:26b" }
-  coding:         { provider: cloud, model: null }   # null = provider default
-  architecture:   { provider: cloud, model: null }
+  simple:         { provider: local, model: "gemma4:e2b", skills: [] }
+  summarization:  { provider: local, model: "gemma4:e4b", skills: [technical-writing] }
+  research:       { provider: local, model: "gemma4:e4b", skills: [technical-research] }
+  debugging:      { provider: local, model: "gemma4:26b", skills: [fde-methodology] }
+  coding:         { provider: cloud, model: null, skills: [github-workflow] }
+  architecture:   { provider: cloud, model: null, skills: [technical-writing] }
 ```
+
+`model: null` means the provider's default. `skills:` names the procedures
+preloaded for that category — see [Skills](#11-skills).
 
 Inspect a decision before spending anything:
 
 ```console
 $ pfa route "Research the latest developments in MCP"
-research -> local/gemma4:e4b [local (no per-token cost)] (matched keyword 'research')
+research -> local/gemma4:e4b [local (no per-token cost)] (matched keyword 'research') + skills: technical-research
 
 $ pfa route "Implement this issue in a branch"
-coding -> cloud/anthropic/claude-sonnet-4.5 [cloud (billed)] (matched keyword 'implement')
+coding -> cloud/anthropic/claude-sonnet-4.5 [cloud (billed)] (matched keyword 'implement') + skills: github-workflow
 
 $ pfa route "What time is it in Tokyo"
 simple -> local/gemma4:e2b [local (no per-token cost)] (no rule matched; fell back to default_task)
@@ -217,7 +229,7 @@ mcp_servers:
 
 or `hermes mcp add <name>`.
 
-**Phase 1 ships no MCP connectors and no custom server.** The existing GitHub,
+**Phases 1–2 ship no MCP connectors and no custom server.** The existing GitHub,
 Postgres and filesystem servers already do the job, and writing wrappers around
 them would be exactly the premature abstraction this project is trying to avoid.
 Phase 3 adds the connector configuration and one minimal custom server built to
@@ -227,26 +239,79 @@ capability, not ours.
 ## 11. Skills
 
 Skills are procedures in [agentskills.io](https://agentskills.io) format —
-portable across Hermes installations, version-controlled, and reviewable.
+portable across Hermes installations, version-controlled, and reviewable. The
+layout is Hermes' own, so nothing here is a project-specific dialect:
 
 ```
-skills/fde/fde-methodology/SKILL.md
+skills/<category>/<name>/SKILL.md
 ```
 
-Phase 1 ships **one** skill: [`fde-methodology`](skills/fde/fde-methodology/SKILL.md),
-the 13-step procedure for taking a problem from "something is broken" to a
-root cause and a client-readable summary. Its central rule is that every
-statement must be labelled **FACT**, **HYPOTHESIS**, **CONCLUSION**,
-**ACTION TAKEN** or **ACTION RECOMMENDED** — and a hypothesis is never promoted
-to a fact because it is plausible or because time is short.
+**Five ship today** ([library README](skills/README.md)):
 
-It ships alone on purpose: one skill proves the format works end to end, and
-the remaining categories (research, GitHub, API integration, technical writing)
-are Phase 2, written against real use rather than guessed at in advance.
+| Skill | What it is for | Attached to |
+|---|---|---|
+| [`fde-methodology`](skills/fde/fde-methodology/SKILL.md) | 13 steps from "something is broken" to a root cause and a client-readable summary | `debugging` |
+| [`technical-research`](skills/fde/technical-research/SKILL.md) | Landscape reviews and veille that produce sourced, dated claims — with a source hierarchy and an explicit "not verified" section | `research` |
+| [`github-workflow`](skills/fde/github-workflow/SKILL.md) | Working in a repository that is not yours: conventions, branches, PRs, review | `coding` |
+| [`api-integration`](skills/fde/api-integration/SKILL.md) | Third-party APIs: contract vs. observed behaviour, error taxonomy, idempotency, webhooks | explicit only |
+| [`technical-writing`](skills/fde/technical-writing/SKILL.md) | Client summaries, decision records, handovers a non-specialist can act on | `summarization`, `architecture` |
+
+Every one inherits the same rule: **label each statement** — FACT, HYPOTHESIS,
+CONCLUSION, ACTION TAKEN, ACTION RECOMMENDED — and never promote a hypothesis to
+a fact because it is plausible or because time is short.
+
+### Attachment is policy, not habit
+
+A procedure you have to remember to type is one that gets skipped on the day it
+matters. `routes.<task>.skills` in `config/routing.yaml` declares which
+procedures load for which category, so the router that already picked the model
+also picks the method:
+
+```console
+$ pfa route "The client's webhook sync stopped last Tuesday"
+debugging -> local/gemma4:26b [local (no per-token cost)] (matched keyword 'webhook') + skills: fde-methodology
+```
+
+Extras stack on top; `--no-auto-skills` opts out. A skill is attached only if it
+applies to the *whole* category — `api-integration` stays explicit because most
+debugging tasks are not integration problems. Reasoning in
+[ADR 0005](docs/adr/0005-skill-library.md).
+
+### Managing the library
 
 ```bash
-pfa run --skill fde-methodology "The client's webhook sync stopped last Tuesday"
+pfa skills                       # list, with where each one attaches
+pfa skills show fde-methodology  # print one in full
+pfa skills validate              # exits 1 if any skill is malformed
+pfa hermes-config --write        # point Hermes at skills/ where it lives
+pfa skills install               # or copy into $HERMES_HOME/skills, if it cannot
+pfa run --skill api-integration "The webhook signature check started failing"
 ```
+
+**Hermes reads the library in place.** `pfa hermes-config --write` emits
+`skills.external_dirs: [<abs path>/skills]`, so the agent loads the procedures
+from where they are version-controlled — there is no second copy to fall behind.
+`pfa skills install` exists for the case that cannot cover: the agent running
+somewhere the repository is not.
+
+Hermes *silently skips* an external directory that does not resolve (verified —
+see [verified-facts](docs/verified-facts.md)), so `pfa doctor` reads the rendered
+config and confirms the path really reaches the library, rather than trusting
+that it was configured:
+
+```console
+  [PASS] skills reachable by hermes  hermes scans /srv/paul-fde-agent/skills in place (skills.external_dirs)
+```
+
+One security note that follows from the same source: external directories are
+**not** a write-protection boundary. If Hermes can write there, the agent can
+rewrite its own procedures — in a git working tree, quietly. The compose stack
+mounts `../skills` read-only for exactly this reason.
+
+A mistyped `--skill` is rejected before Hermes launches, with the real names
+listed. The alternative is a session that quietly runs without the procedure it
+was supposed to follow, which is the same failure the procedures exist to
+prevent.
 
 ## 12. Memory
 
@@ -254,7 +319,7 @@ Hermes provides persistent cross-session memory, FTS5 session search with LLM
 summarisation, and agent-curated recall. It lives in `$HERMES_HOME`, which is a
 Docker volume in the deployed stack.
 
-**Phase 1 does not extend it.** The project-scoped, inspectable, exportable
+**Phases 1–2 do not extend it.** The project-scoped, inspectable, exportable
 memory model — working / episodic / semantic / project — is Phase 4, and needs
 the Postgres service the compose file already provisions. Today, memory is
 whatever Hermes gives you.
@@ -316,8 +381,11 @@ pfa run "Research the latest developments in MCP and what matters for a freelanc
 # Force the strong model regardless of phrasing
 pfa run --task architecture "Should we put a queue between these two services?"
 
-# Run with the FDE methodology procedure loaded
-pfa run --skill fde-methodology "Debug this API integration"
+# The debugging route already attaches fde-methodology; add the API procedure
+pfa run --skill api-integration "Debug this API integration"
+
+# See what the library holds and where each procedure attaches
+pfa skills
 
 # Validate a policy change without spending anything
 pfa run --dry-run "Prepare my morning FDE briefing"
@@ -332,18 +400,20 @@ Configuration and diagnostics:
 pfa config                                  # resolved policy; never prints a key
 pfa doctor --json                           # machine-readable health
 pfa autonomy                                # explain the four levels
+pfa skills validate                         # fail the build on a malformed skill
+pfa skills install                          # copy the library where the repo is absent
 pfa hermes-config --autonomy read --write   # render $HERMES_HOME/config.yaml
 ```
 
 ## 16. Development
 
 ```
-src/pfa/         config, router, hermes integration, runner, observability, doctor, cli
+src/pfa/         config, router, skills, hermes integration, runner, observability, doctor, cli
 config/          routing.yaml — the whole policy
-skills/          agentskills.io-format procedures
+skills/          agentskills.io-format procedures (5, one per FDE work type)
 docker/          Dockerfile + compose stack
 docs/            architecture, security, deployment, verified-facts, ADRs
-tests/           132 tests: config, routing, hermes, runner, observability, security, CLI
+tests/           229 tests: config, routing, skills, hermes, runner, observability, security, CLI
 scripts/         check-secrets.sh
 ```
 
@@ -372,8 +442,8 @@ targets 0.19–0.21 and says so rather than quietly inventing a version.
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Foundation — structure, config, Docker, Hermes integration, local models, healthcheck, CLI | **Complete** |
-| 2 | FDE skills — debugging, research, GitHub, API integration, technical writing | Next |
-| 3 | MCP — GitHub, Postgres, filesystem, web research, one custom server | Planned |
+| 2 | FDE skills — debugging, research, GitHub, API integration, technical writing; policy-driven attachment, validation, install | **Complete** |
+| 3 | MCP — GitHub, Postgres, filesystem, web research, one custom server | Next |
 | 4 | Memory — persistent, project-scoped, episodic, retrieval | Planned |
 | 5 | Automation — morning briefing, research reports, prospect monitoring | Planned |
 | 6 | Routing — cost tracking from real token counts, smarter classification | Planned |
@@ -404,18 +474,23 @@ agent loop cannot block a tool call — it can only look like it does. Choosing
 the less impressive design because it is the one that functions is most of the
 job.
 
-**Separate fact from hypothesis.** The `fde-methodology` skill enforces it, and
+**Separate fact from hypothesis.** Every skill in the library enforces it, and
 so does the code: `pfa route` reports *why* it chose a model; `pfa doctor`
 reports SKIP rather than PASS for anything it cannot verify; the router's
 explanation says "no rule matched" instead of implying intent. Confidently wrong
 is the expensive failure mode with clients.
+
+**Make the method automatic, not remembered.** Procedures are attached by the
+routing policy, so the debugging route loads the debugging method without anyone
+typing it. The day you most need the checklist is the day you are least likely to
+reach for it.
 
 **Make cost and risk visible.** Every run is logged with model, duration and
 status. Every credential path is scanned before it can be pushed. Both are
 things a client eventually asks about.
 
 **Leave something maintainable.** One runtime dependency, ADRs for every real
-decision, and 132 tests that run in a second without network or credentials.
+decision, and 229 tests that run in a second without network or credentials.
 The measure of an FDE engagement is what still works after you leave.
 
 ---

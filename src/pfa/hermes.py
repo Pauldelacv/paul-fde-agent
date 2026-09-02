@@ -24,6 +24,7 @@ import yaml
 
 from .config import Config
 from .router import Decision
+from .skills import skills_dir
 
 DEFAULT_HERMES_HOME = Path("var/hermes")
 
@@ -150,6 +151,13 @@ def render_config(
     API keys are emitted as ``${VAR}`` references, never as values. Hermes
     resolves them from ``$HERMES_HOME/.env`` at load time, so the rendered file
     stays safe to read, diff and back up.
+
+    ``skills.external_dirs`` points Hermes at this repository's skill library so
+    it reads the procedures where they are version-controlled, rather than a
+    copy that can silently fall behind. Verified against the Hermes skills guide
+    on 2026-09-02; see docs/verified-facts.md. The path is absolute because the
+    agent's working directory is not ours, and Hermes silently skips a path that
+    does not resolve — a failure `pfa doctor` reports rather than inherits.
     """
     level = AUTONOMY_LEVELS[autonomy]
     default_route = config.routes[config.default_task]
@@ -178,7 +186,10 @@ def render_config(
             "destructive_slash_confirm": True,
             "deny": list(DENY_GLOBS),
         },
-        "skills": {"enabled": True},
+        "skills": {
+            "enabled": True,
+            "external_dirs": [str(skills_dir().resolve())],
+        },
     }
 
 

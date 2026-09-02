@@ -17,6 +17,8 @@ from .errors import RuntimeMissingError
 from .hermes import build_command, find_hermes
 from .observability import RunRecord, write_record
 from .router import Decision, route
+from .skills import Library
+from .skills import resolve as resolve_skills
 
 
 @dataclass
@@ -31,6 +33,21 @@ class RunResult:
         return self.record.status == "success"
 
 
+def resolve_attached_skills(
+    decision: Decision,
+    requested: list[str] | None = None,
+    library: Library | None = None,
+) -> tuple[str, ...]:
+    """Combine the policy's skills for this category with any asked for by hand.
+
+    Policy order first, then the extras, duplicates dropped. Every name is
+    checked against the library *before* the run starts: a mistyped ``--skill``
+    should cost an error message, not a session that quietly proceeds without
+    the procedure it was supposed to follow.
+    """
+    return resolve_skills([*decision.skills, *(requested or [])], library=library)
+
+
 def run_task(
     text: str,
     config: Config,
@@ -39,19 +56,24 @@ def run_task(
     dry_run: bool = False,
     timeout: int | None = None,
     log_directory: Path | None = None,
+    auto_skills: bool = True,
+    library: Library | None = None,
 ) -> RunResult:
     """Route ``text``, run it through Hermes, and append a structured log record.
 
     With ``dry_run=True`` the routing decision is made and logged but no model is
     invoked — useful for validating a policy change without spending anything.
+    Skill resolution still happens on that path, deliberately: a dry run that
+    skipped it would not validate the thing most likely to be wrong.
     """
-    decision = route(text, config, task=task)
+    decision = route(text, config, task=task, auto_skills=auto_skills)
+    attached = resolve_attached_skills(decision, skills, library=library)
     record = RunRecord(
         task=decision.task,
         task_basis=decision.basis,
         provider=decision.provider.name,
         model=decision.model,
-        skills=list(skills or []),
+        skills=list(attached),
         dry_run=dry_run,
     )
 
@@ -73,7 +95,7 @@ def run_task(
             "  Then verify with:  pfa doctor"
         )
 
-    command = build_command(decision, text, skills=skills, executable=executable)
+    command = build_command(decision, text, skills=list(attached), executable=executable)
     started = time.monotonic()
     try:
         completed = subprocess.run(

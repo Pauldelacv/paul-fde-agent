@@ -18,5 +18,9 @@ class RoutingError(PfaError):
     """A task could not be resolved to a provider/model pair."""
 
 
+class SkillError(PfaError):
+    """A skill is missing, malformed, or named by a policy that cannot find it."""
+
+
 class RuntimeMissingError(PfaError):
     """The Hermes runtime is required for this command but is not installed."""

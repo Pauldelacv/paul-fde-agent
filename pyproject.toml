@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paul-fde-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "A self-hosted Forward Deployed Engineer agent built on the Hermes Agent runtime."
 readme = "README.md"
 license = { text = "MIT" }
@@ -13,7 +13,9 @@ keywords = ["agent", "hermes", "mcp", "llm", "fde", "model-routing"]
 
 # ---------------------------------------------------------------------------
 # Dependency policy: every runtime dependency must earn its place.
-# Phase 1 ships with exactly ONE.
+# Phases 1-2 ship with exactly ONE. The skill library added a parser, a
+# validator and an installer without adding a dependency: SKILL.md frontmatter
+# is YAML, which PyYAML already reads, and copying a directory is shutil.
 #
 #   PyYAML  -> the routing policy and the Hermes config are both YAML. Parsing
 #              YAML by hand is not reasonable. Hermes itself uses YAML config,
