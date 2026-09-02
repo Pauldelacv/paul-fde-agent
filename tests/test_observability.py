@@ -83,3 +83,29 @@ class TestWriting:
         record = RunRecord(error="Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz1234567890")
         body = write_record(record, tmp_path).read_text(encoding="utf-8")
         assert "ghp_" not in body
+
+
+class TestRedactionPrecision:
+    """Redaction must not corrupt the values it is not there to protect."""
+
+    def test_token_counts_survive_the_token_key_hint(self):
+        # `input_tokens` matches the "token" hint but holds a count, not a
+        # credential. Redacting it would silently break cost accounting.
+        record = RunRecord(input_tokens=4096, output_tokens=512)
+        payload = record.to_dict()
+        assert payload["input_tokens"] == 4096
+        assert payload["output_tokens"] == 512
+
+    def test_an_unset_count_stays_null(self):
+        assert RunRecord().to_dict()["input_tokens"] is None
+
+    def test_a_string_under_a_hinted_key_is_still_redacted(self):
+        assert redact({"access_token": "anything at all"})["access_token"] == REDACTED
+
+    def test_a_nested_structure_under_a_hinted_key_is_still_redacted(self):
+        assert redact({"credentials": {"user": "paul", "pass": "hunter2"}})["credentials"] == (
+            REDACTED
+        )
+
+    def test_a_boolean_flag_is_not_mistaken_for_a_credential(self):
+        assert redact({"has_api_key": False})["has_api_key"] is False

@@ -32,6 +32,11 @@ jobs:
       - name: Test
         run: python -m pytest
 
+      - name: Skill library is well-formed
+        # A malformed skill is one Hermes silently declines to load, so it fails
+        # the build here rather than going quiet in production.
+        run: python -m pfa.cli skills validate
+
   security:
     name: Secret scan
     runs-on: ubuntu-latest

@@ -75,10 +75,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-pfa}
       HERMES_HOME: /data/hermes
       PFA_LOG_DIR: /data/logs
+      # Matches the read-only mount below; `pfa hermes-config --write` renders
+      # this path into `skills.external_dirs` so Hermes reads it in place.
+      PFA_SKILLS_DIR: /app/skills
     volumes:
       - agent-data:/data
-      # Skills are read-only to the container: the agent should not silently
-      # rewrite its own procedures on the host.
+      # Skills are read-only to the container, and this flag is load-bearing.
+      # The rendered Hermes config points `skills.external_dirs` here, and an
+      # external skill directory is NOT a write-protection boundary in Hermes:
+      # if the process can write to it, the agent can rewrite its own
+      # procedures — in a git working tree, quietly. See docs/security.md.
       - ../skills:/app/skills:ro
       - ../config:/app/config:ro
     # Keep a shell open so `docker compose exec agent pfa run "..."` works.

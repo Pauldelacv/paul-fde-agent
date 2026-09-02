@@ -4,7 +4,7 @@ Every external claim this project makes is recorded here with its source and the
 date it was checked. If a statement about Hermes or Gemma is not in this file,
 it has not been verified and should not be relied on.
 
-Last verified: **2026-09-01**.
+Last verified: **2026-09-01**; skills rows re-checked **2026-09-02**.
 
 ## Hermes Agent
 
@@ -23,6 +23,11 @@ Last verified: **2026-09-01**.
 | **No built-in routing by user-task category** | Verified (absence) | Configuration docs — `auxiliary` covers internal side-tasks only |
 | MCP servers under `mcp_servers` key; stdio, HTTP, OAuth 2.1 transports | Verified | [MCP guide](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) |
 | Skills at `$HERMES_HOME/skills/<category>/<name>/SKILL.md`, agentskills.io format | Verified | [Skills guide](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) |
+| Skill frontmatter is YAML between `---` fences (`name`, `description`, `version`, optional `platforms`, `metadata.hermes.tags`), followed by Markdown | Verified 2026-09-02 | Skills guide — "SKILL.md Format" |
+| `skills.external_dirs` in `config.yaml` makes Hermes scan additional skill directories in place; `~` and `${VAR}` expand | Verified 2026-09-02 | Skills guide — "External Skill Directories" |
+| A configured external skill dir that does not exist is **silently skipped**, not reported | Verified 2026-09-02 | Skills guide — "Non-existent paths are silently skipped" |
+| A local skill shadows an external one of the same name | Verified 2026-09-02 | Skills guide — "Local precedence" |
+| External dirs are **not** a write-protection boundary: the agent can modify skills there if the process can write to them | Verified 2026-09-02 | Skills guide — "External dirs are not a write-protection boundary" |
 | Built-in cron; jobs in `~/.hermes/cron/jobs.json`; skills attachable to jobs | Verified | [Cron guide](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) |
 | `approvals` block: `mode` (`smart`/`manual`/`off`), `cron_mode`, `unattended_mode`, `deny` globs | Verified | [Security guide](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/security.md) |
 | Terminal backends: local, docker, ssh, daytona, singularity, modal, vercel_sandbox | Verified | Security guide |
@@ -36,6 +41,14 @@ exist. This project targets **0.19.x – 0.21.x** and pins that range in
 `pyproject.toml`. Because 0.x software makes no backwards-compatibility promise,
 `pfa doctor` reports the *resolved* version at runtime rather than trusting the
 pin, and every Hermes flag we pass is listed above with its source.
+
+The skills rows are what Phase 2 is built on. Two of them changed the design
+rather than merely documenting it: `external_dirs` means the repository's
+`skills/` directory can be scanned in place, so `pfa hermes-config --write` now
+points Hermes at it instead of relying on a copy that can fall behind — and
+because a non-existent external dir is *silently skipped*, `pfa doctor` verifies
+that the configured path actually resolves to the library rather than trusting
+that it was configured.
 
 ## Gemma 4
 

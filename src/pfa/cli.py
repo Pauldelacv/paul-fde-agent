@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -16,10 +17,11 @@ from . import __version__
 from .config import load_config
 from .doctor import FAIL, PASS, SKIP, WARN, run_all, to_json, worst_status
 from .errors import PfaError
-from .hermes import AUTONOMY_LEVELS, DEFAULT_AUTONOMY, render_config, write_config
+from .hermes import AUTONOMY_LEVELS, DEFAULT_AUTONOMY, hermes_home, render_config, write_config
 from .observability import log_dir
 from .router import route
 from .runner import run_task
+from .skills import discover, install, skills_dir
 
 _COLORS = {PASS: "\033[32m", WARN: "\033[33m", FAIL: "\033[31m", SKIP: "\033[90m"}
 _RESET = "\033[0m"
@@ -36,7 +38,7 @@ def _paint(status: str) -> str:
 
 def cmd_route(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    decision = route(args.text, config, task=args.task)
+    decision = route(args.text, config, task=args.task, auto_skills=not args.no_auto_skills)
     if args.json:
         print(
             json.dumps(
@@ -48,6 +50,7 @@ def cmd_route(args: argparse.Namespace) -> int:
                     "model": decision.model,
                     "model_ref": decision.model_ref,
                     "local": decision.provider.is_local,
+                    "skills": list(decision.skills),
                 },
                 indent=2,
             )
@@ -66,6 +69,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         skills=args.skill,
         dry_run=args.dry_run,
         timeout=args.timeout,
+        auto_skills=not args.no_auto_skills,
     )
 
     if args.json:
@@ -127,7 +131,10 @@ def cmd_config(args: argparse.Namespace) -> int:
         print(f"  {task:<14} -> {selected.provider}/{model}{marker}")
         if selected.description:
             print(f"  {'':<14}    {selected.description}")
+        if selected.skills:
+            print(f"  {'':<14}    skills: {', '.join(selected.skills)}")
     print(f"\nclassification rules: {len(config.rules)} (first match wins)")
+    print(f"skill library: {skills_dir()}")
     print(f"log directory: {log_dir()}")
     return 0
 
@@ -157,6 +164,89 @@ def cmd_autonomy(args: argparse.Namespace) -> int:
             f"           approvals.mode={level.approvals_mode}  "
             f"unattended={level.unattended_mode}  cron={level.cron_mode}\n"
         )
+    return 0
+
+
+def _routes_using(config_path: str | None) -> dict[str, list[str]]:
+    """Map skill name -> task categories that attach it, for the listing.
+
+    A policy that fails to load is not an error here: ``pfa skills`` must keep
+    working when the thing being debugged is the policy.
+    """
+    try:
+        config = load_config(config_path)
+    except PfaError:
+        return {}
+    usage: dict[str, list[str]] = {}
+    for task, selected in config.routes.items():
+        for name in selected.skills:
+            usage.setdefault(name, []).append(task)
+    return usage
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    action = getattr(args, "skills_action", "list") or "list"
+    library = discover()
+
+    if action == "install":
+        home = Path(args.home) if getattr(args, "home", None) else hermes_home()
+        written = install(library, home)
+        print(f"Installed {len(written)} skills into {home / 'skills'}:")
+        for path in written:
+            print(f"  {path}")
+        if library.problems:
+            print(
+                f"\n{len(library.problems)} skill(s) were skipped as invalid. "
+                f"Run `pfa skills validate` to see why.",
+                file=sys.stderr,
+            )
+        return 0
+
+    if action == "validate":
+        if getattr(args, "json", False):
+            print(json.dumps([p.to_dict() for p in library.problems], indent=2))
+        else:
+            print(f"Validated {len(library.skills)} skills in {library.root}.")
+            for problem in library.problems:
+                print(f"  FAIL  {problem.path}: {problem.message}", file=sys.stderr)
+                if problem.remedy:
+                    print(f"        -> {problem.remedy}", file=sys.stderr)
+        return 1 if library.problems else 0
+
+    if action == "show":
+        skill = library.require(args.name)
+        if getattr(args, "json", False):
+            print(json.dumps({**skill.to_dict(), "body": skill.body()}, indent=2))
+        else:
+            print(skill.path.read_text(encoding="utf-8"), end="")
+        return 0
+
+    # --- list
+    usage = _routes_using(args.config)
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                [{**s.to_dict(), "attached_to": usage.get(s.name, [])} for s in library.skills],
+                indent=2,
+            )
+        )
+        return 0
+
+    if not library.skills:
+        print(f"No skills found in {library.root}.")
+        print("Run from the repository root, or set PFA_SKILLS_DIR.")
+        return 0
+
+    width = max(len(s.name) for s in library.skills)
+    print(f"Skill library: {library.root}\n")
+    for skill in library.skills:
+        attached = ", ".join(usage.get(skill.name, [])) or "explicit only (--skill)"
+        print(f"  {skill.name:<{width}}  v{skill.version}  [{skill.category}]")
+        print(f"  {'':<{width}}  {skill.description}")
+        print(f"  {'':<{width}}  attached to: {attached}\n")
+    print(f"{len(library.skills)} skills. `pfa skills show <name>` prints one in full.")
+    for problem in library.problems:
+        print(f"  WARN  {problem.path}: {problem.message}", file=sys.stderr)
     return 0
 
 
@@ -217,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--skill", action="append", default=[], help="Preload a Hermes skill (repeatable)."
     )
+    run.add_argument(
+        "--no-auto-skills",
+        action="store_true",
+        help="Do not preload the skills the policy attaches to this task category.",
+    )
     run.add_argument("--dry-run", action="store_true", help="Route and log, but invoke no model.")
     run.add_argument("--timeout", type=int, default=None, help="Seconds before aborting.")
     run.add_argument("--json", action="store_true", help="Emit the run record as JSON.")
@@ -228,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     route_cmd.add_argument("text")
     route_cmd.add_argument("--task")
+    route_cmd.add_argument("--no-auto-skills", action="store_true")
     route_cmd.add_argument("--json", action="store_true")
     route_cmd.set_defaults(func=cmd_route)
 
@@ -255,6 +351,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     autonomy = subparsers.add_parser("autonomy", help="Describe the four autonomy levels.")
     autonomy.set_defaults(func=cmd_autonomy)
+
+    # `pfa skills` with no action lists the library — the thing wanted 90% of
+    # the time. The parent defaults below supply what cmd_skills reads on that
+    # path; each sub-action declares its own.
+    skills_cmd = subparsers.add_parser("skills", help="Inspect and install the FDE skill library.")
+    skills_cmd.set_defaults(func=cmd_skills, skills_action="list", json=False, name=None, home=None)
+    skills_actions = skills_cmd.add_subparsers(dest="skills_action")
+
+    skills_list = skills_actions.add_parser("list", help="List every skill and where it attaches.")
+    skills_list.add_argument("--json", action="store_true")
+    skills_list.set_defaults(func=cmd_skills, skills_action="list", name=None, home=None)
+
+    skills_show = skills_actions.add_parser("show", help="Print one skill in full.")
+    skills_show.add_argument("name")
+    skills_show.add_argument("--json", action="store_true")
+    skills_show.set_defaults(func=cmd_skills, skills_action="show", home=None)
+
+    skills_validate = skills_actions.add_parser(
+        "validate", help="Check every skill is well-formed. Exits 1 if any is not."
+    )
+    skills_validate.add_argument("--json", action="store_true")
+    skills_validate.set_defaults(func=cmd_skills, skills_action="validate", name=None, home=None)
+
+    skills_install = skills_actions.add_parser(
+        "install", help="Copy the library into $HERMES_HOME/skills, where Hermes reads it."
+    )
+    skills_install.add_argument(
+        "--home", metavar="PATH", help="Hermes home to install into (default: $HERMES_HOME)."
+    )
+    skills_install.set_defaults(func=cmd_skills, skills_action="install", name=None, json=False)
 
     logs = subparsers.add_parser("logs", help="Show recent structured run records.")
     logs.add_argument("--limit", type=int, default=20)

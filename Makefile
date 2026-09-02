@@ -40,8 +40,20 @@ fmt: ## Auto-format
 doctor: ## Check the environment
 	$(PY) -m pfa.cli doctor
 
+.PHONY: skills
+skills: ## List the FDE skill library and where each procedure attaches
+	$(PY) -m pfa.cli skills
+
+.PHONY: skills-validate
+skills-validate: ## Fail if any skill is malformed
+	$(PY) -m pfa.cli skills validate
+
+.PHONY: skills-install
+skills-install: ## Copy the skill library into $$HERMES_HOME/skills
+	$(PY) -m pfa.cli skills install
+
 .PHONY: check
-check: lint test ## Everything CI runs
+check: lint test skills-validate ## Everything CI runs
 
 # --- secrets safety --------------------------------------------------------
 

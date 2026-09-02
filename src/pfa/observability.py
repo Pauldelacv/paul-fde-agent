@@ -33,7 +33,13 @@ _SECRET_VALUE_PATTERNS = [
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{16,}"),
 ]
 
-# Keys whose value is replaced wholesale, whatever it looks like.
+# Keys whose value is replaced wholesale, whatever it looks like — but only
+# when the value could actually carry a credential. A credential is text, or a
+# structure containing text; `input_tokens: 4096` matches the "token" hint and
+# is a count, and redacting it would silently corrupt the cost accounting that
+# reads this file. Numbers, booleans and nulls are therefore left alone.
+_REDACTABLE_TYPES = (str, dict, list)
+
 _SECRET_KEY_HINTS = (
     "api_key",
     "apikey",
@@ -49,6 +55,13 @@ _SECRET_KEY_HINTS = (
 REDACTED = "***redacted***"
 
 
+def _is_secret(key: Any, value: Any) -> bool:
+    """Whether ``key``'s value should be replaced wholesale rather than scanned."""
+    if not isinstance(value, _REDACTABLE_TYPES):
+        return False
+    return any(hint in str(key).lower() for hint in _SECRET_KEY_HINTS)
+
+
 def redact(value: Any) -> Any:
     """Strip credential-shaped data from anything about to be written to disk."""
     if isinstance(value, str):
@@ -57,10 +70,7 @@ def redact(value: Any) -> Any:
             out = pattern.sub(REDACTED, out)
         return out
     if isinstance(value, dict):
-        return {
-            k: (REDACTED if any(h in str(k).lower() for h in _SECRET_KEY_HINTS) else redact(v))
-            for k, v in value.items()
-        }
+        return {k: (REDACTED if _is_secret(k, v) else redact(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [redact(v) for v in value]
     return value

@@ -86,11 +86,43 @@ visible, so the policy can be tuned from evidence rather than guesswork.
 |---|---|
 | `config.py` | Load, expand `${VAR}`, validate the policy. Every error names the key and the remedy. |
 | `router.py` | Pure classification and model resolution. No I/O. |
+| `skills.py` | Discover, validate and install the procedure library; resolve the names a run will load. |
 | `hermes.py` | Render `$HERMES_HOME/config.yaml`, define autonomy levels, build argv. |
 | `runner.py` | Invoke Hermes as a subprocess, time it, record the outcome. |
 | `observability.py` | JSONL run records, with redaction applied before every write. |
 | `doctor.py` | Environment healthcheck. Reports SKIP where it cannot verify — never PASS. |
 | `cli.py` | argparse surface. |
+
+## Skills, and where attachment happens
+
+The router produces a task category. That category is exactly the granularity at
+which a standing procedure applies, so `routes.<task>.skills` in the policy names
+the procedures preloaded for it, and they travel with the decision:
+`pfa route` prints them before anything runs.
+
+Two consequences are deliberate:
+
+- **Names are resolved before Hermes launches.** A mistyped `--skill` costs an
+  error message listing the real skills, not a session that quietly runs without
+  the procedure it was supposed to follow. This holds on `--dry-run` too.
+- **The config loader never touches the filesystem.** `routes.<task>.skills` is
+  parsed as a list of names and nothing more, which keeps the policy a pure
+  function of the file it was handed. Whether a named skill *exists* is checked
+  where it can produce a useful message: `pfa doctor`, and the runner.
+
+Getting the procedures to Hermes at all was the other Phase 2 problem. Hermes
+reads `$HERMES_HOME/skills`, not this repository, and before Phase 2 nothing
+reconciled the two: a procedure could be edited, committed and reviewed here and
+never loaded by the running agent.
+
+Re-checking the Hermes skills guide produced the better answer — `skills.
+external_dirs` makes Hermes scan a directory in place — so the rendered config
+points at `skills/` and there is no copy to fall behind. `pfa skills install`
+remains for deployments where the repository is not on the agent's machine, and
+`pfa doctor` covers both paths. It reads the *rendered* config rather than
+re-rendering it, because Hermes silently skips an external directory that does
+not resolve, and a check that confirms its own opinion confirms nothing. See
+[ADR 0005](adr/0005-skill-library.md).
 
 ## Security posture
 
@@ -110,7 +142,8 @@ See [security.md](security.md).
 
 ## What is deliberately not built yet
 
-Phase 1 ships the spine. The FDE skill library, the MCP connectors, the memory
-layer and the scheduled workflows are Phases 2–5, and the README roadmap says so.
-Building the abstraction before the second real use case exists is how frameworks
-become unusable.
+Phase 1 shipped the spine; Phase 2 shipped the skill library on top of it. The
+MCP connectors, the memory layer and the scheduled workflows are Phases 3–5, and
+the README roadmap says so. Building the abstraction before the second real use
+case exists is how frameworks become unusable — which is also why `skills.py`
+did not exist in Phase 1. One skill needs a path; five need a registry.

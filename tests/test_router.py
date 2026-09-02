@@ -143,3 +143,39 @@ class TestShippedPolicyFlagshipScenarios:
             decision = route("", shipped, task=task)
             assert decision.model, f"route {task} resolved to an empty model"
             assert decision.provider.name in shipped.providers
+
+
+class TestAttachedSkills:
+    """The policy attaches procedures to a category; the decision carries them."""
+
+    @pytest.fixture
+    def config_with_skills(self, policy_with_skills):
+        return load_config(policy_with_skills)
+
+    def test_decision_carries_the_policy_skills(self, config_with_skills):
+        assert route("research this", config_with_skills).skills == ("alpha-procedure",)
+
+    def test_a_route_with_no_skills_carries_none(self, config_with_skills):
+        assert route("something ordinary", config_with_skills).skills == ()
+
+    def test_order_follows_the_policy(self, config_with_skills):
+        decision = route("implement this", config_with_skills)
+        assert decision.skills == ("alpha-procedure", "beta-procedure")
+
+    def test_explicit_task_still_gets_its_skills(self, config_with_skills):
+        assert route("anything", config_with_skills, task="research").skills == ("alpha-procedure",)
+
+    def test_auto_skills_off_drops_them(self, config_with_skills):
+        assert route("research this", config_with_skills, auto_skills=False).skills == ()
+
+    def test_auto_skills_off_does_not_change_the_model(self, config_with_skills):
+        # Suppressing a procedure must never quietly re-route the task.
+        with_skills = route("research this", config_with_skills)
+        without = route("research this", config_with_skills, auto_skills=False)
+        assert (with_skills.task, with_skills.model_ref) == (without.task, without.model_ref)
+
+    def test_explanation_names_the_skills(self, config_with_skills):
+        assert "skills: alpha-procedure" in route("research this", config_with_skills).explain()
+
+    def test_explanation_omits_the_clause_when_there_are_none(self, config_with_skills):
+        assert "skills:" not in route("something ordinary", config_with_skills).explain()

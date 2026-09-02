@@ -6,12 +6,13 @@ seams it depends on: locating the executable, and `subprocess.run`.
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
 
 from pfa.config import load_config
-from pfa.errors import RuntimeMissingError
+from pfa.errors import RuntimeMissingError, SkillError
 from pfa.runner import run_task
 
 
@@ -94,3 +95,121 @@ class TestMissingRuntime:
         with pytest.raises(RuntimeMissingError):
             run_task("research this", config, log_directory=tmp_path)
         assert list(tmp_path.glob("runs-*.jsonl")), "the failed run must still be recorded"
+
+
+class TestSkillAttachment:
+    """What the runner hands Hermes, and what it refuses to hand it."""
+
+    @pytest.fixture
+    def config_with_skills(self, policy_with_skills):
+        return load_config(policy_with_skills)
+
+    def test_policy_skills_reach_the_command(
+        self, config_with_skills, skills_root, tmp_path, monkeypatch
+    ):
+        captured = {}
+
+        def capture(command, **kwargs):
+            captured["command"] = command
+            return FakeCompleted()
+
+        monkeypatch.setattr("pfa.runner.find_hermes", lambda: "/usr/bin/hermes")
+        monkeypatch.setattr(subprocess, "run", capture)
+        run_task("research this", config_with_skills, log_directory=tmp_path)
+
+        command = captured["command"]
+        assert command.count("--skills") == 1
+        assert command[command.index("--skills") + 1] == "alpha-procedure"
+
+    def test_explicit_skills_are_appended_after_the_policy_ones(
+        self, config_with_skills, skills_root, tmp_path, monkeypatch
+    ):
+        captured = {}
+        monkeypatch.setattr("pfa.runner.find_hermes", lambda: "/usr/bin/hermes")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda command, **kwargs: (captured.update(command=command), FakeCompleted())[1],
+        )
+        run_task(
+            "research this",
+            config_with_skills,
+            skills=["beta-procedure"],
+            log_directory=tmp_path,
+        )
+        command = captured["command"]
+        names = [command[i + 1] for i, arg in enumerate(command) if arg == "--skills"]
+        assert names == ["alpha-procedure", "beta-procedure"]
+
+    def test_a_skill_requested_twice_is_passed_once(
+        self, config_with_skills, skills_root, tmp_path
+    ):
+        result = run_task(
+            "research this",
+            config_with_skills,
+            skills=["alpha-procedure"],
+            dry_run=True,
+            log_directory=tmp_path,
+        )
+        assert result.record.skills == ["alpha-procedure"]
+
+    def test_no_auto_skills_leaves_only_what_was_asked_for(
+        self, config_with_skills, skills_root, tmp_path
+    ):
+        result = run_task(
+            "research this",
+            config_with_skills,
+            skills=["beta-procedure"],
+            auto_skills=False,
+            dry_run=True,
+            log_directory=tmp_path,
+        )
+        assert result.record.skills == ["beta-procedure"]
+
+    def test_the_attached_skills_are_recorded_in_the_log(
+        self, config_with_skills, skills_root, tmp_path
+    ):
+        run_task("research this", config_with_skills, dry_run=True, log_directory=tmp_path)
+        line = next(tmp_path.glob("runs-*.jsonl")).read_text(encoding="utf-8").strip()
+        assert json.loads(line)["skills"] == ["alpha-procedure"]
+
+    def test_an_unknown_skill_fails_before_anything_is_spent(
+        self, config_with_skills, skills_root, tmp_path, monkeypatch
+    ):
+        def explode(*args, **kwargs):  # pragma: no cover - must never run
+            raise AssertionError("a mistyped skill must not reach the runtime")
+
+        monkeypatch.setattr("pfa.runner.find_hermes", lambda: "/usr/bin/hermes")
+        monkeypatch.setattr(subprocess, "run", explode)
+        with pytest.raises(SkillError, match="Unknown skill 'typo'"):
+            run_task("research this", config_with_skills, skills=["typo"], log_directory=tmp_path)
+
+    def test_a_dry_run_validates_skills_too(self, config_with_skills, skills_root, tmp_path):
+        # A dry run whose whole point is validating a policy change would be
+        # worthless if it skipped the part most likely to be wrong.
+        with pytest.raises(SkillError):
+            run_task(
+                "research this",
+                config_with_skills,
+                skills=["typo"],
+                dry_run=True,
+                log_directory=tmp_path,
+            )
+
+    def test_a_policy_naming_a_missing_skill_is_reported(
+        self, config_with_skills, tmp_path, monkeypatch
+    ):
+        # No skills_root fixture here: the library is empty, so the policy's
+        # own reference cannot resolve.
+        monkeypatch.setenv("PFA_SKILLS_DIR", str(tmp_path / "no-skills-here"))
+        with pytest.raises(SkillError, match="alpha-procedure"):
+            run_task("research this", config_with_skills, dry_run=True, log_directory=tmp_path)
+
+    def test_a_skill_free_route_needs_no_library_at_all(
+        self, config_with_skills, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("PFA_SKILLS_DIR", str(tmp_path / "no-skills-here"))
+        result = run_task(
+            "something ordinary", config_with_skills, dry_run=True, log_directory=tmp_path
+        )
+        assert result.ok and result.record.skills == []

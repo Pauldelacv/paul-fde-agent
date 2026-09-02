@@ -131,6 +131,36 @@ class TestNoPrivateDataInSkills:
             for pattern in CREDENTIAL_PATTERNS:
                 assert not pattern.search(body), f"{path} matched {pattern.pattern}"
 
+    def test_no_skill_names_a_client_specific_host_or_path(self, repo_root):
+        """Skills are committed to a public repository; they must stay generic.
+
+        Shape-based, like the credential scan: an absolute home directory or a
+        non-example hostname in a procedure means a real engagement leaked in.
+        """
+
+        suspicious = [
+            re.compile(r"/(?:home|Users)/(?!user\b)[a-z][a-z0-9_-]{2,}/"),
+            re.compile(
+                r"https?://(?!(?:[a-z0-9.-]*\.)?(?:example\.(?:com|org|invalid)|"
+                r"localhost|agentskills\.io|hermes-agent\.nousresearch\.com|"
+                r"github\.com|nousresearch\.com))[a-z0-9.-]+\.[a-z]{2,}"
+            ),
+        ]
+        offenders = []
+        for path in sorted((repo_root / "skills").rglob("*.md")):
+            body = path.read_text(encoding="utf-8")
+            for pattern in suspicious:
+                for match in pattern.findall(body):
+                    offenders.append(f"{path.relative_to(repo_root)}: {match}")
+        assert not offenders, "client-specific detail in a public skill: " + "; ".join(offenders)
+
+    def test_every_skill_is_well_formed(self, repo_root):
+        """A skill that does not parse is one Hermes silently will not load."""
+        from pfa.skills import discover
+
+        library = discover(repo_root / "skills")
+        assert not library.problems, [p.to_dict() for p in library.problems]
+
     def test_no_prospect_or_client_list_is_tracked(self, repo_root):
         forbidden = {"prospects.yaml", "prospects.yml", "clients.yaml", "clients.yml"}
         offenders = [f for f in tracked_files(repo_root) if f.split("/")[-1] in forbidden]

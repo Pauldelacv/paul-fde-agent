@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import write_skill
 
 from pfa.cli import main
 
@@ -124,6 +125,127 @@ class TestLogsCommand:
         capsys.readouterr()
         assert main(argv("logs")) == 0
         assert "research" in capsys.readouterr().out
+
+
+class TestSkillsCommand:
+    @pytest.fixture
+    def argv_skills(self, policy_with_skills):
+        """argv pinned to the policy that attaches the throwaway procedures."""
+        return lambda *rest: ["--config", str(policy_with_skills), *rest]
+
+    def test_bare_command_lists_the_library(self, argv_skills, skills_root, capsys):
+        assert main(argv_skills("skills")) == 0
+        out = capsys.readouterr().out
+        assert "alpha-procedure" in out and "beta-procedure" in out
+
+    def test_listing_says_where_each_skill_attaches(self, argv_skills, skills_root, capsys):
+        main(argv_skills("skills", "list"))
+        out = capsys.readouterr().out
+        assert "attached to: research, coding" in out or "attached to: coding, research" in out
+
+    def test_listing_marks_an_unattached_skill_as_explicit_only(
+        self, argv_skills, skills_root, tmp_path, capsys
+    ):
+        write_skill(skills_root, "gamma-procedure")
+        main(argv_skills("skills", "list"))
+        out = capsys.readouterr().out
+        assert "explicit only (--skill)" in out
+
+    def test_json_listing_is_machine_readable(self, argv_skills, skills_root, capsys):
+        assert main(argv_skills("skills", "list", "--json")) == 0
+        payload = json.loads(capsys.readouterr().out)
+        names = {entry["name"] for entry in payload}
+        assert {"alpha-procedure", "beta-procedure"} == names
+        alpha = next(e for e in payload if e["name"] == "alpha-procedure")
+        assert sorted(alpha["attached_to"]) == ["coding", "research"]
+
+    def test_empty_library_says_where_it_looked(self, argv_skills, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("PFA_SKILLS_DIR", str(tmp_path / "nowhere"))
+        assert main(argv_skills("skills")) == 0
+        assert "No skills found" in capsys.readouterr().out
+
+    def test_show_prints_the_whole_file(self, argv_skills, skills_root, capsys):
+        assert main(argv_skills("skills", "show", "alpha-procedure")) == 0
+        out = capsys.readouterr().out
+        assert out.startswith("---") and "# Procedure" in out
+
+    def test_show_rejects_an_unknown_name_and_lists_the_real_ones(
+        self, argv_skills, skills_root, capsys
+    ):
+        assert main(argv_skills("skills", "show", "nope")) == 2
+        assert "Available: alpha-procedure" in capsys.readouterr().err
+
+    def test_validate_passes_on_a_clean_library(self, argv_skills, skills_root, capsys):
+        assert main(argv_skills("skills", "validate")) == 0
+        assert "Validated 2 skills" in capsys.readouterr().out
+
+    def test_validate_exits_nonzero_and_names_the_broken_file(
+        self, argv_skills, skills_root, capsys
+    ):
+        broken = skills_root / "fde" / "broken-procedure"
+        broken.mkdir(parents=True)
+        (broken / "SKILL.md").write_text("no frontmatter\n", encoding="utf-8")
+        assert main(argv_skills("skills", "validate")) == 1
+        assert "broken-procedure" in capsys.readouterr().err
+
+    def test_install_writes_into_the_hermes_tree(
+        self, argv_skills, skills_root, tmp_path, monkeypatch, capsys
+    ):
+        home = tmp_path / "hermes"
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        assert main(argv_skills("skills", "install")) == 0
+        assert (home / "skills" / "fde" / "alpha-procedure" / "SKILL.md").is_file()
+        assert "Installed 2 skills" in capsys.readouterr().out
+
+    def test_install_honours_an_explicit_home(self, argv_skills, skills_root, tmp_path, capsys):
+        home = tmp_path / "elsewhere"
+        assert main(argv_skills("skills", "install", "--home", str(home))) == 0
+        assert (home / "skills" / "fde" / "beta-procedure" / "SKILL.md").is_file()
+
+    def test_listing_survives_an_unloadable_policy(self, tmp_path, skills_root, capsys):
+        # `pfa skills` must keep working when the thing being debugged is the policy.
+        broken = tmp_path / "broken.yaml"
+        broken.write_text("version: 99\n", encoding="utf-8")
+        assert main(["--config", str(broken), "skills"]) == 0
+        assert "alpha-procedure" in capsys.readouterr().out
+
+
+class TestSkillsInRouteAndRun:
+    @pytest.fixture
+    def argv_skills(self, policy_with_skills):
+        return lambda *rest: ["--config", str(policy_with_skills), *rest]
+
+    def test_route_reports_the_attached_procedures(self, argv_skills, capsys):
+        assert main(argv_skills("route", "research this")) == 0
+        assert "skills: alpha-procedure" in capsys.readouterr().out
+
+    def test_route_json_carries_them(self, argv_skills, capsys):
+        main(argv_skills("route", "research this", "--json"))
+        assert json.loads(capsys.readouterr().out)["skills"] == ["alpha-procedure"]
+
+    def test_route_no_auto_skills_suppresses_them(self, argv_skills, capsys):
+        main(argv_skills("route", "research this", "--no-auto-skills", "--json"))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["skills"] == [] and payload["task"] == "research"
+
+    def test_dry_run_records_the_attached_procedures(
+        self, argv_skills, skills_root, tmp_path, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("PFA_LOG_DIR", str(tmp_path / "logs"))
+        main(argv_skills("run", "research this", "--dry-run", "--json"))
+        assert json.loads(capsys.readouterr().out)["skills"] == ["alpha-procedure"]
+
+    def test_a_mistyped_skill_exits_two_with_the_available_names(
+        self, argv_skills, skills_root, tmp_path, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("PFA_LOG_DIR", str(tmp_path / "logs"))
+        assert main(argv_skills("run", "research this", "--skill", "typo", "--dry-run")) == 2
+        assert "Available: alpha-procedure" in capsys.readouterr().err
+
+    def test_config_command_shows_the_attachments(self, argv_skills, capsys):
+        assert main(argv_skills("config")) == 0
+        out = capsys.readouterr().out
+        assert "skills: alpha-procedure" in out and "skill library:" in out
 
 
 class TestParser:
