@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Refuse to let credential-shaped content reach a public repository.
 #
-# Runs over TRACKED files only: untracked scratch files are the operator's
-# business, but anything git knows about is one push away from being public.
+# Runs over every file the next `git add -A` would stage: tracked files, plus
+# untracked ones that .gitignore does not cover. Tracked-only was the earlier
+# rule and it had a hole — a brand-new file is invisible until it is staged, so
+# the scanner reported a clean tree that failed the moment it was committed.
+# Anything gitignored is still skipped; scratch files in ignored paths remain
+# the operator's business.
 #
 # A file that legitimately contains credential-shaped text (this scanner, the
 # redaction code, their tests, the security docs) declares itself by including
@@ -39,11 +43,11 @@ while IFS= read -r file; do
     continue
   fi
   to_scan+=("$file")
-done < <(git ls-files)
+done < <(git ls-files --cached --others --exclude-standard)
 
 scanned=${#to_scan[@]}
 if [ "$scanned" -eq 0 ]; then
-  echo "secrets-check: no tracked files to scan"
+  echo "secrets-check: no files to scan"
   exit 0
 fi
 
@@ -62,7 +66,7 @@ if git ls-files --error-unmatch .env >/dev/null 2>&1; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  echo "secrets-check: clean ($scanned tracked files scanned)"
+  echo "secrets-check: clean ($scanned files scanned, tracked and stageable)"
 else
   echo
   echo "Refusing to consider this tree publishable."

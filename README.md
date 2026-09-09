@@ -6,7 +6,7 @@ model only when the task actually needs one.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-322%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-324%20passing-brightgreen.svg)](tests/)
 
 > **Status: Phases 1–3 complete.** The routing spine, CLI, Hermes integration,
 > Docker deployment, security tooling and test suite work (Phase 1); the FDE
@@ -120,7 +120,7 @@ alternatives and the trade-off accepted, is in
   named volumes, and a one-command `make deploy`.
 - **Secret-leak prevention** — layered `.gitignore`, a shape-based scanner, and
   security tests that fail the build.
-- **322 tests**, no network access, no real credentials.
+- **324 tests**, no network access, no real credentials.
 
 **Planned:** persistent memory, scheduled workflows. See the
 [Roadmap](#18-roadmap).
@@ -143,7 +143,7 @@ Requires Python 3.11–3.13 (the range Hermes supports).
 
 ```bash
 make install     # dev dependencies only, no Hermes runtime
-make test        # 322 tests, ~2s, no network
+make test        # 324 tests, ~2s, no network
 make lint        # ruff check + format check
 make check       # everything CI runs
 make doctor
@@ -558,7 +558,7 @@ config/          routing.yaml — the model policy; mcp.yaml — the connector p
 skills/          agentskills.io-format procedures (8, one per FDE work type)
 docker/          Dockerfile + compose stack
 docs/            architecture, security, deployment, lead-generation, verified-facts, ADRs
-tests/           322 tests: config, routing, skills, mcp, leads, hermes, runner,
+tests/           324 tests: config, routing, skills, mcp, leads, hermes, runner,
                  observability, security, CLI
 scripts/         check-secrets.sh
 private/         prospect lists, suppression, drafts — gitignored, never committed
@@ -647,7 +647,7 @@ status. Every credential path is scanned before it can be pushed. Both are
 things a client eventually asks about.
 
 **Leave something maintainable.** One runtime dependency, ADRs for every real
-decision, and 322 tests that run in a second without network or credentials.
+decision, and 324 tests that run in a second without network or credentials.
 The measure of an FDE engagement is what still works after you leave.
 
 ---

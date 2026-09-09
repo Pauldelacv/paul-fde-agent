@@ -221,3 +221,44 @@ class TestSecretScannerScript:
             ["bash", str(script)], cwd=repo_root, capture_output=True, text=True, check=False
         )
         assert result.returncode == 0, f"secret scanner failed:\n{result.stdout}\n{result.stderr}"
+
+    def test_it_scans_untracked_files_that_git_add_would_stage(self, repo_root, tmp_path):
+        """A brand-new file must not be invisible to the scanner.
+
+        Scanning tracked files only left a hole worth closing: a new file is
+        untracked until it is staged, so the scanner reported a clean tree that
+        failed CI the moment it was committed. Anything .gitignore covers is
+        still skipped — see the next test.
+        """
+        probe = repo_root / "zz-secret-scanner-probe.py"
+        probe.write_text('k = "sk-untracked-probe-0123456789abcdef"\n', encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["bash", "scripts/check-secrets.sh"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            probe.unlink()
+        assert result.returncode == 1, "an untracked, stageable credential must fail the scan"
+        assert "zz-secret-scanner-probe.py" in result.stdout
+
+    def test_it_still_ignores_gitignored_paths(self, repo_root):
+        """Scratch files in ignored directories stay the operator's business."""
+        ignored = repo_root / "var"
+        ignored.mkdir(exist_ok=True)
+        probe = ignored / "zz-secret-scanner-probe.py"
+        probe.write_text('k = "sk-ignored-probe-0123456789abcdef"\n', encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["bash", "scripts/check-secrets.sh"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            probe.unlink()
+        assert result.returncode == 0, f"gitignored paths must be skipped:\n{result.stdout}"

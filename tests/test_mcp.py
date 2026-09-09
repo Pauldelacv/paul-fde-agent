@@ -1,3 +1,4 @@
+# PFA-ALLOW-SECRET-FIXTURES: contains synthetic credential-shaped strings by design.
 """MCP connector declarations: parsing, validation and rendering.
 
 The property that matters most here is negative: the rendered Hermes config
