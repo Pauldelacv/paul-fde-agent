@@ -78,6 +78,21 @@ services:
       # Matches the read-only mount below; `pfa hermes-config --write` renders
       # this path into `skills.external_dirs` so Hermes reads it in place.
       PFA_SKILLS_DIR: /app/skills
+      PFA_CONFIG: /app/config/routing.yaml
+      PFA_MCP_CONFIG: /app/config/mcp.yaml
+      # Prospect lists, the suppression list and drafts. On the named volume,
+      # NOT a bind mount: the container runs as uid 10001 and a host directory
+      # owned by anyone else is silently unwritable. `make leads-pull` /
+      # `make leads-push` move files in and out. docs/deployment.md covers the
+      # bind-mount alternative and the one chown it needs.
+      PFA_PRIVATE_DIR: /data/private
+      # The only directory the filesystem MCP server may touch.
+      PFA_WORKSPACE_DIR: /data/workspace
+      # Credential for the lemlist MCP connector. Passed through as a reference
+      # in the rendered Hermes config and resolved here, at connect time.
+      # Left unset it stays the literal string `${LEMLIST_API_KEY}` — see
+      # config/mcp.yaml. `pfa doctor` reports that before you hit the 401.
+      LEMLIST_API_KEY: ${LEMLIST_API_KEY:-}
     volumes:
       - agent-data:/data
       # Skills are read-only to the container, and this flag is load-bearing.

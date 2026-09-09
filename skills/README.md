@@ -21,11 +21,24 @@ reviewed, diffed, and blamed when it turns out to be wrong.
 | [`github-workflow`](fde/github-workflow/SKILL.md) | Working in a repository that is not yours | `coding` |
 | [`api-integration`](fde/api-integration/SKILL.md) | Third-party APIs, webhooks, integrations | — explicit only |
 | [`technical-writing`](fde/technical-writing/SKILL.md) | Client summaries, decision records, handovers | `summarization`, `architecture` |
+| [`lead-generation`](fde/lead-generation/SKILL.md) | Sourcing, enriching and qualifying prospects, to reviewed drafts | `prospecting` |
+| [`gdpr-compliance`](fde/gdpr-compliance/SKILL.md) | Handling personal data lawfully: basis, notice, rights, retention | `prospecting` |
+| [`outreach-writing`](fde/outreach-writing/SKILL.md) | Cold messages a specific person would answer | — explicit only |
 
 Attachment is declared in `config/routing.yaml` under `routes.<task>.skills`, so
-changing it is a config edit, not a code change. `api-integration` is
-deliberately explicit-only: it applies when the problem is an integration, not
-whenever something is broken. Attach it with `--skill api-integration`.
+changing it is a config edit, not a code change.
+
+Two skills are deliberately explicit-only, for the same reason. `api-integration`
+applies when the problem *is* an integration, not whenever something is broken.
+`outreach-writing` applies when the deliverable *is* copy — sourcing, list
+hygiene and enrichment review are prospecting tasks that produce none, and a
+writing procedure loaded for them is context spent making the model less
+focused. `pfa leads draft` attaches it itself, so the one path that always
+writes copy always has it.
+
+`gdpr-compliance` is attached to `prospecting` because it passes the opposite
+test: every task in that category touches personal data, by definition of what a
+prospect list is.
 
 ## The shared rule
 
@@ -43,6 +56,7 @@ pfa skills show fde-methodology # print one skill in full
 pfa skills validate             # check every skill parses and is well-formed
 pfa hermes-config --write       # point Hermes at this directory
 pfa run --skill api-integration "The client's webhook stopped arriving"
+pfa run --skill outreach-writing "Rewrite this first message; it reads like a template"
 ```
 
 ## How these reach the agent
@@ -79,4 +93,7 @@ procedures. The compose stack mounts this directory read-only for that reason.
 
 Keep it client-agnostic. Skills are committed to a public repository; a test
 asserts no credential ever appears in one, and no client name or private detail
-belongs in one either.
+belongs in one either. The same test rejects any non-example hostname, so a
+vendor's documentation URL does not belong in a procedure — put the concrete
+endpoint in `config/mcp.yaml` and the citation in `docs/verified-facts.md`, and
+keep the skill about the method.

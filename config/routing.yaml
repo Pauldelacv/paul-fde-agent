@@ -70,7 +70,12 @@ routes:
 
   debugging:
     provider: local
-    model: "gemma4:26b"
+    # e4b, not 26b. The larger model reasons better about a stack trace, and it
+    # also needs ~20 GB of RAM and is unusably slow on a CPU VPS — so shipping
+    # 26b as the default meant the shipped policy did not run on the machine the
+    # project is built to be deployed on. Raise it if your host can carry it:
+    # see docs/deployment.md#sizing.
+    model: "gemma4:e4b"
     description: Log analysis, error triage, reproduction of reported defects.
     skills: [fde-methodology]
 
@@ -79,6 +84,26 @@ routes:
     model: null
     description: Writing, refactoring and reviewing code; test authoring.
     skills: [github-workflow]
+
+  prospecting:
+    # LOCAL ON PURPOSE, and this is the one route where the provider is a
+    # compliance decision rather than a cost one.
+    #
+    # A prospect list is personal data under the GDPR. Sending it to a hosted
+    # model adds a processor and, usually, a transfer outside the EU — both of
+    # which have to appear in the Article 30 record and be covered by a DPA.
+    # Keeping it on the box means neither exists to document.
+    #
+    # Cost accepted, stated plainly: e4b writes weaker copy than a frontier
+    # model. If you would rather have the better copy, change `provider` to
+    # `cloud` — and then name that provider as a processor in your record and
+    # check its DPA first. See docs/adr/0007-lead-generation.md.
+    provider: local
+    model: "gemma4:e4b"
+    description: >-
+      Prospect research, ICP definition, enrichment review and outreach
+      drafting. Handles personal data; never sends anything.
+    skills: [lead-generation, gdpr-compliance]
 
   architecture:
     provider: cloud
@@ -99,6 +124,39 @@ routes:
 # on word boundaries against the task text.
 classification:
   rules:
+    # Evaluated FIRST, deliberately. These keywords are domain nouns, not
+    # ordinary English: someone who wrote "prospect", "ICP" or "lemlist" is
+    # doing prospecting whatever else the sentence contains. Placed later,
+    # "design a cold email sequence" would be caught by architecture's
+    # "design a", and "the outreach campaign stopped working" by debugging.
+    #
+    # The cost: "debug the lemlist webhook" now classifies as prospecting. That
+    # attaches the GDPR and lead-generation procedures to a debugging task,
+    # which is wrong but not harmful, and `--task debugging` overrides it.
+    #
+    # Note what is NOT here: bare "lead" and bare "campaign" are ordinary words
+    # that would hijack unrelated tasks. Only the unambiguous forms are listed.
+    - task: prospecting
+      keywords:
+        - prospect
+        - prospects
+        - prospecting
+        - prospection
+        - lead generation
+        - lead gen
+        - leadgen
+        - lemlist
+        - icp
+        - ideal customer profile
+        - cold email
+        - cold outreach
+        - outreach
+        - outbound
+        - email sequence
+        - enrichment
+        - enrich
+        - démarchage
+
     - task: architecture
       keywords:
         - architecture

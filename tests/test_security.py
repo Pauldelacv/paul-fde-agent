@@ -162,9 +162,55 @@ class TestNoPrivateDataInSkills:
         assert not library.problems, [p.to_dict() for p in library.problems]
 
     def test_no_prospect_or_client_list_is_tracked(self, repo_root):
-        forbidden = {"prospects.yaml", "prospects.yml", "clients.yaml", "clients.yml"}
+        forbidden = {
+            "prospects.yaml",
+            "prospects.yml",
+            "prospects.csv",
+            "suppression.txt",
+            "clients.yaml",
+            "clients.yml",
+        }
         offenders = [f for f in tracked_files(repo_root) if f.split("/")[-1] in forbidden]
         assert not offenders, f"personal target lists must stay out of the repo: {offenders}"
+
+
+class TestLeadGenerationDataStaysOut:
+    """The lead-generation vertical handles real people. None of it may be committed."""
+
+    def test_nothing_under_private_is_tracked(self, repo_root):
+        offenders = [f for f in tracked_files(repo_root) if f.startswith("private/")]
+        assert not offenders, f"private/ holds personal data and must stay untracked: {offenders}"
+
+    def test_no_draft_is_tracked(self, repo_root):
+        offenders = [
+            f for f in tracked_files(repo_root) if "/drafts/" in f or f.startswith("draft")
+        ]
+        assert not offenders, f"generated outreach drafts must stay untracked: {offenders}"
+
+    @pytest.mark.parametrize("pattern", ["private/", "prospects.csv", "suppression.txt", "drafts/"])
+    def test_gitignore_covers_the_lead_generation_paths(self, repo_root, pattern):
+        body = (repo_root / ".gitignore").read_text(encoding="utf-8")
+        assert pattern in body, f".gitignore must cover {pattern}"
+
+    def test_the_mcp_catalogue_holds_no_inlined_credential(self, repo_root):
+        """Connector credentials are ${VAR} references, resolved by Hermes at connect time."""
+        import yaml
+
+        document = yaml.safe_load((repo_root / "config" / "mcp.yaml").read_text(encoding="utf-8"))
+        for name, spec in (document.get("servers") or {}).items():
+            for key, value in (spec.get("headers") or {}).items():
+                assert str(value).startswith("${"), f"servers.{name}.headers.{key} inlines a value"
+
+    def test_a_run_record_never_carries_the_task_text(self, repo_root):
+        """Prospect drafting puts personal data in the prompt; the log must not keep it.
+
+        `pfa logs` output is the natural thing to paste into a support thread,
+        so a prompt echoed into it would leak a named person's details.
+        """
+        from pfa.observability import RunRecord
+
+        assert "text" not in RunRecord().to_dict()
+        assert "prompt" not in RunRecord().to_dict()
 
 
 class TestSecretScannerScript:
@@ -175,3 +221,44 @@ class TestSecretScannerScript:
             ["bash", str(script)], cwd=repo_root, capture_output=True, text=True, check=False
         )
         assert result.returncode == 0, f"secret scanner failed:\n{result.stdout}\n{result.stderr}"
+
+    def test_it_scans_untracked_files_that_git_add_would_stage(self, repo_root, tmp_path):
+        """A brand-new file must not be invisible to the scanner.
+
+        Scanning tracked files only left a hole worth closing: a new file is
+        untracked until it is staged, so the scanner reported a clean tree that
+        failed CI the moment it was committed. Anything .gitignore covers is
+        still skipped — see the next test.
+        """
+        probe = repo_root / "zz-secret-scanner-probe.py"
+        probe.write_text('k = "sk-untracked-probe-0123456789abcdef"\n', encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["bash", "scripts/check-secrets.sh"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            probe.unlink()
+        assert result.returncode == 1, "an untracked, stageable credential must fail the scan"
+        assert "zz-secret-scanner-probe.py" in result.stdout
+
+    def test_it_still_ignores_gitignored_paths(self, repo_root):
+        """Scratch files in ignored directories stay the operator's business."""
+        ignored = repo_root / "var"
+        ignored.mkdir(exist_ok=True)
+        probe = ignored / "zz-secret-scanner-probe.py"
+        probe.write_text('k = "sk-ignored-probe-0123456789abcdef"\n', encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["bash", "scripts/check-secrets.sh"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            probe.unlink()
+        assert result.returncode == 0, f"gitignored paths must be skipped:\n{result.stdout}"

@@ -4,7 +4,8 @@ Every external claim this project makes is recorded here with its source and the
 date it was checked. If a statement about Hermes or Gemma is not in this file,
 it has not been verified and should not be relied on.
 
-Last verified: **2026-09-01**; skills rows re-checked **2026-09-02**.
+Last verified: **2026-09-01**; skills rows re-checked **2026-09-02**; MCP and
+lemlist rows added **2026-09-09**.
 
 ## Hermes Agent
 
@@ -33,6 +34,13 @@ Last verified: **2026-09-01**; skills rows re-checked **2026-09-02**.
 | Terminal backends: local, docker, ssh, daytona, singularity, modal, vercel_sandbox | Verified | Security guide |
 | CLI flags `-q/--query`, `--oneshot`, `-Q/--quiet`, `-m/--model`, `-s/--skills` | Verified | [CLI reference](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/reference/cli-commands.md) |
 | `HERMES_HOME` env var overrides the config directory | Verified | CLI reference |
+| HTTP MCP servers take `url` + `headers`; stdio take `command` + `args` + `env` | Verified 2026-09-09 | [MCP guide](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) — "Basic configuration reference" |
+| `mcp_servers.<name>.tools.include` / `.exclude` filter which tools are registered; entries may be fnmatch globs; `include` wins when both are present | Verified 2026-09-09 | MCP guide — "Whitelist / Blacklist server tools", "Precedence rule" |
+| `enabled: false` makes Hermes skip a server without attempting a connection | Verified 2026-09-09 | MCP guide — "Disable a server" |
+| `connect_timeout` and `timeout` are per-server keys | Verified 2026-09-09 | MCP guide — "Common keys" |
+| `${VAR}` in `config.yaml` resolves from the environment, then `$HERMES_HOME/.env`; `${env:VAR}` is an accepted synonym | Verified 2026-09-09 | [Configuration](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) |
+| **An unset `${VAR}` is kept verbatim and only warned about** — the placeholder text itself is sent | Verified 2026-09-09 | Configuration — "If a referenced variable is not set, the placeholder is kept verbatim … and a warning is logged" |
+| GitHub is deliberately absent from the Hermes MCP catalogue; its bundled `github/*` skills driving `gh` are the intended integration | Verified (absence) 2026-09-09 | MCP guide — "GitHub is deliberately **not** in the catalog" |
 
 ### What this means for us
 
@@ -49,6 +57,39 @@ points Hermes at it instead of relying on a copy that can fall behind — and
 because a non-existent external dir is *silently skipped*, `pfa doctor` verifies
 that the configured path actually resolves to the library rather than trusting
 that it was configured.
+
+## lemlist
+
+Checked **2026-09-09**, against lemlist's own developer documentation.
+
+| Claim | Status | Source |
+|---|---|---|
+| lemlist publishes an official hosted **MCP server** at `app.lemlist.com/mcp`, HTTP transport | Verified | MCP Server Setup, `developer.lemlist.com/mcp/setup` |
+| It authenticates by OAuth, or by an `X-API-Key` header carrying an API key | Verified | MCP Server Setup |
+| `?bucket=` narrows the advertised tool set: `core`, `builder`, `prospecting`, `crm`, `engagement`, `deliverability`, `insights` | Verified | MCP Server Setup |
+| **`?bucket=` is not access control.** The always-present `call_api` tool still reaches the rest of the account; only scoping the API key restricts access | Verified | MCP Server Setup — the warning is lemlist's own |
+| The MCP tool set covers campaigns, leads, sourcing from a B2B database, email finding and verification, stats and webhooks | Verified | MCP Server Setup — "Available tools" |
+| Enrichment (email finding, verification, phone) consumes account credits | Verified | MCP Server Setup; Enrich Lead endpoint |
+| REST API base URL is `api.lemlist.com/api` | Verified | Enrich Lead endpoint, `servers:` block |
+| REST auth is **HTTP Basic, not Bearer**: username empty, password the API key, i.e. base64 of `:APIKEY` | Verified | Authentication, `developer.lemlist.com/api-reference/getting-started/authentication` |
+| Rate limit is 20 requests per 2 seconds, per API key, on all routes; responses carry `Retry-After`, `X-RateLimit-Limit`, `-Remaining`, `-Reset` | Verified | Rate Limits |
+| `POST /leads/{leadId}/enrich` takes `findEmail`, `verifyEmail`, `linkedinEnrichment`, `findPhone`; returns an enrichment **id**, not a result — it is asynchronous | Verified | Enrich Lead |
+| Enrichment returns `409 ALREADY_ENRICHED` when the contact already has the data, and a separate 409 while one is in progress | Verified | Enrich Lead — response codes |
+
+### What this means for us
+
+The connector is a *configuration*, not code: lemlist hosts the MCP server, so
+`config/mcp.yaml` declares a URL and a header and Hermes does the rest. Writing
+a lemlist client would have been the premature abstraction ADR 0004 warns about.
+
+Two of these rows changed the design rather than documenting it. The
+`?bucket=` warning is lemlist's own and it is unusually direct: narrowing the
+bucket does **not** restrict access, because `call_api` remains. So the tool
+exclusions in `config/mcp.yaml` are a focusing measure and are described that
+way, and the real restriction — scoping the API key in lemlist — is the step
+`docs/lead-generation.md` tells the operator to take. And because enrichment is
+asynchronous and billed per call, the `lead-generation` skill orders the
+pipeline to deduplicate before enriching rather than after.
 
 ## Gemma 4
 
@@ -74,4 +115,9 @@ two release pages and update the dates:
 
 ```bash
 curl -s https://pypi.org/pypi/hermes-agent/json | jq -r '.info.version, .info.requires_python'
+curl -s https://developer.lemlist.com/llms.txt | head -40
 ```
+
+The lemlist documentation publishes an `llms.txt` index and serves every page as
+Markdown by appending `.md` to its path, which is how the rows above were read.
+That is the fastest way to re-check them.

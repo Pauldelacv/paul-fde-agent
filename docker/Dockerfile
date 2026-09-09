@@ -35,7 +35,10 @@ ENV PYTHONUNBUFFERED=1 \
     HERMES_HOME=/data/hermes \
     PFA_LOG_DIR=/data/logs \
     PFA_CONFIG=/app/config/routing.yaml \
-    PFA_SKILLS_DIR=/app/skills
+    PFA_MCP_CONFIG=/app/config/mcp.yaml \
+    PFA_SKILLS_DIR=/app/skills \
+    PFA_PRIVATE_DIR=/data/private \
+    PFA_WORKSPACE_DIR=/data/workspace
 
 WORKDIR /app
 
@@ -49,7 +52,12 @@ COPY skills/ ./skills/
 COPY scripts/ ./scripts/
 
 # Persistent state lives on a volume, never in the image layer.
-RUN mkdir -p /data/hermes /data/logs && chown -R agent:agent /data /app
+#   /data/private   prospect lists, the suppression list, generated drafts.
+#                   Personal data: it belongs on a volume you back up and
+#                   encrypt, never in an image layer that gets pushed.
+#   /data/workspace the only directory the filesystem MCP server may touch.
+RUN mkdir -p /data/hermes /data/logs /data/private /data/workspace \
+    && chown -R agent:agent /data /app
 USER agent
 VOLUME ["/data"]
 

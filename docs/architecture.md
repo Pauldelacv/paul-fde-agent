@@ -29,7 +29,7 @@ That gap is this project's spine.
         ┌─────────────────────────────────────┼─────────────────────────┐
         ▼                                     ▼                         ▼
    Skills (SKILL.md)                    MCP servers               Memory (Hermes)
-   FDE procedures                  GitHub / Postgres / web        sessions, recall
+   FDE procedures                   lemlist / filesystem         sessions, recall
         │                                     │                         │
         └─────────────────────────────────────┴─────────────────────────┘
                                               │
@@ -142,8 +142,30 @@ See [security.md](security.md).
 
 ## What is deliberately not built yet
 
-Phase 1 shipped the spine; Phase 2 shipped the skill library on top of it. The
-MCP connectors, the memory layer and the scheduled workflows are Phases 3–5, and
-the README roadmap says so. Building the abstraction before the second real use
-case exists is how frameworks become unusable — which is also why `skills.py`
-did not exist in Phase 1. One skill needs a path; five need a registry.
+Phase 1 shipped the spine; Phase 2 shipped the skill library on top of it;
+Phase 3 shipped the MCP connector policy and the lead-generation vertical. The
+memory layer and the scheduled workflows are Phases 4–5, and the README roadmap
+says so.
+
+Building the abstraction before the second real use case exists is how
+frameworks become unusable — which is also why `skills.py` did not exist in
+Phase 1. One skill needs a path; five need a registry. `mcp.py` arrived the same
+way: one connector is four lines of YAML, two connectors with credentials that
+fail misleadingly need a loader that validates them.
+
+Phase 3 also *removed* something from the plan. The roadmap had promised one
+custom MCP server "to demonstrate the protocol end to end". lemlist publishes a
+hosted one, so ours would have been a process to run and a protocol to keep
+current in exchange for nothing. The promise is withdrawn and marked as such
+rather than deferred — see [ADR 0006](adr/0006-mcp-connectors.md). Subtraction
+was the right answer in Phase 1 too, when the question was what remains once
+Hermes' own capabilities are taken out.
+
+### The one place the architecture bends for a non-technical reason
+
+Every route in `config/routing.yaml` is chosen on cost and capability, except
+`prospecting`, which is pinned to the local model because a prospect list is
+personal data. A hosted model would write better copy and would also add a
+processor to contract with and a transfer to document. That is a legal
+constraint expressed as a routing decision, and it is worth naming as such:
+[ADR 0007](adr/0007-lead-generation.md).

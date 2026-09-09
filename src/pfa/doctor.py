@@ -20,6 +20,7 @@ import yaml
 from .config import Config, load_config
 from .errors import ConfigError
 from .hermes import find_hermes, hermes_home, hermes_version
+from .mcp import McpCatalogue, load_mcp_config
 from .skills import Library, discover, install_state
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
@@ -268,6 +269,80 @@ def check_skills(config: Config | None, library: Library | None = None) -> list[
     return checks
 
 
+def check_mcp(catalogue: McpCatalogue | None = None) -> list[Check]:
+    """Report which MCP connectors are declared, and which cannot authenticate.
+
+    The failure this catches is specific and verified: Hermes leaves an unset
+    ``${VAR}`` in place and only logs a warning, so a connector whose key is
+    missing does not fail to start — it connects with the literal text
+    ``${LEMLIST_API_KEY}`` as its credential and comes back 401. That looks like
+    a revoked key and sends the operator to the wrong place. Report it here
+    instead, before a connection is attempted.
+    """
+    try:
+        resolved = catalogue if catalogue is not None else load_mcp_config()
+    except ConfigError as exc:
+        return [Check("mcp connectors", FAIL, str(exc), "Fix config/mcp.yaml.")]
+
+    if resolved.source_path is None:
+        return [
+            Check(
+                "mcp connectors",
+                SKIP,
+                "no config/mcp.yaml — running without MCP connectors",
+                "Add config/mcp.yaml to declare one.",
+            )
+        ]
+
+    enabled = resolved.enabled
+    checks = [
+        Check(
+            "mcp connectors",
+            PASS if enabled else WARN,
+            f"{resolved.source_path} — {len(enabled)} enabled of {len(resolved.servers)} declared",
+            "" if enabled else "Every declared server is disabled; nothing will be connected.",
+        )
+    ]
+
+    for server in enabled:
+        missing = server.missing_env(os.environ)
+        placeholders = [
+            name
+            for name in server.requires_env
+            if (os.environ.get(name) or "").startswith("REPLACE_ME")
+        ]
+        if placeholders:
+            checks.append(
+                Check(
+                    f"mcp:{server.name} credentials",
+                    FAIL,
+                    f"${', $'.join(placeholders)} still holds the placeholder value",
+                    f"Replace {', '.join(placeholders)} in .env with a real value.",
+                )
+            )
+        elif missing:
+            checks.append(
+                Check(
+                    f"mcp:{server.name} credentials",
+                    WARN,
+                    f"${', $'.join(missing)} is not set — hermes will pass the literal "
+                    f"${{{missing[0]}}} to {server.target} and the server will reject it",
+                    f"Set {', '.join(missing)} in .env, or set `enabled: false` for "
+                    f"{server.name} in config/mcp.yaml.",
+                )
+            )
+        else:
+            checks.append(
+                Check(
+                    f"mcp:{server.name} credentials",
+                    PASS,
+                    f"{', '.join(server.requires_env) or 'no credential needed'} — "
+                    f"{server.transport} {server.target}",
+                )
+            )
+    return checks
+
+
 def check_secret_hygiene(root: Path | None = None) -> list[Check]:
     """Confirm the repository is not about to leak credentials."""
     base = root or Path.cwd()
@@ -340,6 +415,7 @@ def run_all(config_path: str | None = None) -> list[Check]:
         checks += check_providers(config)
     checks += check_hermes_home()
     checks += check_skills(config)
+    checks += check_mcp()
     checks += check_secret_hygiene()
     return checks
 

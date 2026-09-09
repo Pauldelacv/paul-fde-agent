@@ -5,11 +5,12 @@ client, skills, memory, cron and the approval system. This module does not
 reimplement any of that. It does exactly three things:
 
   1. locate the ``hermes`` executable and report its version,
-  2. render ``$HERMES_HOME/config.yaml`` from our routing policy,
+  2. render ``$HERMES_HOME/config.yaml`` from our routing and connector policy,
   3. build the ``hermes chat`` argv for a routed run.
 
 Every flag used here was verified against the Hermes CLI reference on
-2026-09-01 (repo v0.21.0). See docs/verified-facts.md.
+2026-09-01 (repo v0.21.0); the ``mcp_servers`` schema on 2026-09-09. See
+docs/verified-facts.md.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from .config import Config
+from .mcp import McpCatalogue, load_mcp_config
 from .router import Decision
 from .skills import skills_dir
 
@@ -144,7 +146,10 @@ def hermes_version(timeout: int = 15) -> str | None:
 
 
 def render_config(
-    config: Config, autonomy: str = DEFAULT_AUTONOMY, terminal: str = "local"
+    config: Config,
+    autonomy: str = DEFAULT_AUTONOMY,
+    terminal: str = "local",
+    catalogue: McpCatalogue | None = None,
 ) -> dict:
     """Build the Hermes ``config.yaml`` document from our routing policy.
 
@@ -158,8 +163,15 @@ def render_config(
     on 2026-09-02; see docs/verified-facts.md. The path is absolute because the
     agent's working directory is not ours, and Hermes silently skips a path that
     does not resolve — a failure `pfa doctor` reports rather than inherits.
+
+    ``mcp_servers`` comes from ``config/mcp.yaml`` and is emitted only when a
+    server is declared and enabled, so an installation with no connectors gets a
+    config with no empty block to explain. Credential references pass through as
+    ``${VAR}`` for the same reason API keys do: Hermes resolves them at connect
+    time, and the rendered file never holds a secret.
     """
     level = AUTONOMY_LEVELS[autonomy]
+    servers = (catalogue if catalogue is not None else load_mcp_config()).to_hermes()
     default_route = config.routes[config.default_task]
     default_provider = config.provider_for(default_route.provider)
     default_model = default_route.model or default_provider.default_model
@@ -190,6 +202,7 @@ def render_config(
             "enabled": True,
             "external_dirs": [str(skills_dir().resolve())],
         },
+        **({"mcp_servers": servers} if servers else {}),
     }
 
 
@@ -198,12 +211,13 @@ def write_config(
     autonomy: str = DEFAULT_AUTONOMY,
     terminal: str = "local",
     home: Path | None = None,
+    catalogue: McpCatalogue | None = None,
 ) -> Path:
     """Render and write ``$HERMES_HOME/config.yaml``. Returns the path written."""
     target_home = home or hermes_home()
     target_home.mkdir(parents=True, exist_ok=True)
     path = target_home / "config.yaml"
-    document = render_config(config, autonomy=autonomy, terminal=terminal)
+    document = render_config(config, autonomy=autonomy, terminal=terminal, catalogue=catalogue)
     path.write_text(
         yaml.safe_dump(document, sort_keys=False, default_flow_style=False),
         encoding="utf-8",

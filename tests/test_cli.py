@@ -258,3 +258,98 @@ class TestParser:
             main(["--version"])
         assert excinfo.value.code == 0
         assert "pfa" in capsys.readouterr().out
+
+
+class TestMcpCommand:
+    def test_lists_the_shipped_connectors(self, argv, capsys):
+        assert main(argv("mcp", "--json")) == 0
+        names = [server["name"] for server in json.loads(capsys.readouterr().out)]
+        assert "lemlist" in names
+
+    def test_reports_a_missing_credential_as_a_nonzero_exit(self, argv, monkeypatch, capsys):
+        monkeypatch.delenv("LEMLIST_API_KEY", raising=False)
+        monkeypatch.delenv("PFA_WORKSPACE_DIR", raising=False)
+        assert main(argv("mcp")) == 1
+        assert "verbatim" in capsys.readouterr().err
+
+    def test_says_so_plainly_when_no_catalogue_exists(self, argv, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        assert main(argv("mcp")) == 0
+        assert "without MCP connectors" in capsys.readouterr().out
+
+
+class TestLeadsCommand:
+    @pytest.fixture
+    def private(self, tmp_path, monkeypatch):
+        root = tmp_path / "private"
+        monkeypatch.setenv("PFA_PRIVATE_DIR", str(root))
+        return root
+
+    def test_init_creates_the_files(self, argv, private, capsys):
+        assert main(argv("leads", "init")) == 0
+        assert (private / "prospects.csv").is_file()
+        assert (private / "suppression.txt").is_file()
+        assert "gitignored" in capsys.readouterr().out
+
+    def test_init_refuses_to_overwrite(self, argv, private):
+        main(argv("leads", "init"))
+        assert main(argv("leads", "init")) == 2
+
+    def test_list_before_init_names_the_fix(self, argv, private, capsys):
+        assert main(argv("leads")) == 2
+        assert "pfa leads init" in capsys.readouterr().err
+
+    def test_check_passes_on_the_template(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        capsys.readouterr()
+        assert main(argv("leads", "check")) == 0
+
+    def test_check_fails_when_provenance_is_missing(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        path = private / "prospects.csv"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + "nobody@example.com,No,Body,,Example,,2026-09-01,,,\n",
+            encoding="utf-8",
+        )
+        capsys.readouterr()
+        assert main(argv("leads", "check")) == 1
+        assert "Article 14" in capsys.readouterr().out
+
+    def test_suppress_then_check_marks_the_prospect(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        address = json.loads(_leads_json(argv, capsys))[0]["email"]
+        assert main(argv("leads", "suppress", address, "--reason", "asked to stop")) == 0
+        capsys.readouterr()
+        main(argv("leads", "check", "--json"))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["counts"]["suppressed"] == 1
+
+    def test_draft_dry_run_invokes_no_model_and_writes_nothing(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        capsys.readouterr()
+        assert main(argv("leads", "draft", "--dry-run")) == 0
+        captured = capsys.readouterr()
+        assert "no model invoked" in captured.err
+        assert not (private / "drafts").exists()
+
+    def test_draft_skips_a_suppressed_prospect(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        address = json.loads(_leads_json(argv, capsys))[0]["email"]
+        main(argv("leads", "suppress", address))
+        capsys.readouterr()
+        assert main(argv("leads", "draft", "--dry-run")) == 1
+        assert "on the suppression list" in capsys.readouterr().err
+
+    def test_draft_for_an_unknown_address_is_an_error(self, argv, private, capsys):
+        main(argv("leads", "init"))
+        capsys.readouterr()
+        assert main(argv("leads", "draft", "--email", "nobody@example.com")) == 2
+        assert "not in the prospect list" in capsys.readouterr().err
+
+
+def _leads_json(argv, capsys) -> str:
+    """Run `leads list --json` and hand back its stdout."""
+    capsys.readouterr()
+    main(argv("leads", "list", "--json"))
+    return capsys.readouterr().out
