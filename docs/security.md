@@ -144,6 +144,84 @@ What this project does about it:
 Running the agent as a user that cannot write to the checkout is the stronger
 form of the first control, and is what a deployment outside Docker should do.
 
+## Personal data, and the agent that touches it
+
+The lead-generation vertical is the first part of this project that processes
+data about **named living people**. That changes the threat model: the worst
+outcome is no longer a wasted token or a broken repository, it is a message to
+someone who asked never to be contacted again.
+
+Three controls, in decreasing order of how much they are worth:
+
+**There is no send path.** `src/pfa/leads.py` imports no HTTP client, no
+`smtplib`, nothing that can reach the network. It writes files. A test asserts
+the module names no transport and exposes no function beginning with `send`.
+This is deliberately stronger than an approval gate: ADR 0003 established that a
+permission check outside the agent loop cannot block a call, and the same logic
+applies here — the reliable way to guarantee an agent does not send email is for
+it to have no way to send email.
+
+**Prospect data does not leave the machine.** `routes.prospecting` is pinned to
+the local model. This is a compliance control, not a cost one: a list that never
+reaches a hosted model has no processor to contract with under Article 28 and no
+transfer to document under Article 46. `config/routing.yaml` says so at the line
+someone would edit.
+
+**Suppression is checked before anything else.** Before enrichment, before
+drafting, before a prospect is even listed — and re-checked inside `draft_for`,
+because that function is importable and its guarantee has to hold for a caller
+that skipped the preflight. The list is appended to, never rewritten, so a
+partial write cannot lose an entry.
+
+Alongside those, the ordinary hygiene:
+
+- Everything lives under `$PFA_PRIVATE_DIR` (`private/`, or `/data/private` in
+  Docker), gitignored, with tests asserting nothing under it is tracked.
+- Run records carry the task category, model, duration and status — **never the
+  task text**. A drafting prompt contains a named person's details, and
+  `pfa logs` output is the natural thing to paste into a support thread. A test
+  asserts the record has no text field.
+- A row with no `source` or `collected_at` is refused rather than warned about:
+  Article 14 requires telling someone where their data came from, so a row
+  without it describes a person who cannot lawfully be contacted.
+
+### What these controls do not cover
+
+- **A volume backup contains the prospect list.** `agent-data` holds
+  `/data/private`. Encrypt it, and apply the same retention you promised in the
+  Article 14 notice — a backup is a copy, and deleting the original does not
+  delete it.
+- **The lemlist connector's tool exclusions are focus, not security.** lemlist
+  documents that narrowing the advertised tool set does not restrict access,
+  because a generic `call_api` tool remains available in every bucket. The real
+  boundary is the scope of the API key itself.
+- **The code cannot check the truth of a source, only its presence.** Nor
+  whether your balancing test is sound, nor whether the national marketing rules
+  were read. The `gdpr-compliance` skill states it is a procedure and not legal
+  advice, and escalates what it cannot answer.
+- **A rights request must reach a human.** The agent's job is to recognise one —
+  including "stop emailing me" in a reply — and escalate it, never to answer it.
+
+## MCP connectors are network reach
+
+Every connector in `config/mcp.yaml` is a route out of the container and a set
+of tools the model can call. Two things follow.
+
+**A missing credential fails misleadingly.** Hermes keeps an unset `${VAR}`
+verbatim and only logs a warning (verified 2026-09-09), so a connector with no
+key connects and sends the literal placeholder text as its credential. The 401
+that comes back reads like a revoked key. `pfa doctor` and `pfa mcp` report it
+before a connection is attempted, and the loader refuses a server that
+references a variable it has not declared in `requires_env`.
+
+**The rendered config holds references, never values.** `${VAR}` survives into
+`$HERMES_HOME/config.yaml` and Hermes resolves it at connect time, so the file
+stays safe to read, diff and back up. A test sets a real-looking key in the
+environment and asserts it does not appear in the rendered document.
+
+Scope every connector's credential at the provider. A tool filter shapes what
+the model is offered; only the key decides what the account can do.
+
 ## Deployment hardening
 
 - Run the container as non-root (the image does; UID 10001).

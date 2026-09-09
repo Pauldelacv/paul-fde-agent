@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------
+# Paul FDE Agent — MCP connector declarations
+#
+# This file answers one question: "which external tool servers may the agent
+# reach, and what is it allowed to do with them?"
+#
+# It is rendered into `mcp_servers` in $HERMES_HOME/config.yaml by
+# `pfa hermes-config --write`. Hermes owns the MCP client; this file is the
+# policy about which servers it connects to. See docs/adr/0006-mcp-connectors.md
+#
+# Nothing here is secret. A server names the ENVIRONMENT VARIABLE holding its
+# credential and Hermes resolves `${VAR}` at connect time, from the process
+# environment or $HERMES_HOME/.env. Never inline a key in this file.
+#
+# VERIFIED PITFALL: Hermes keeps an unset `${VAR}` verbatim and only logs a
+# warning (configuration docs, checked 2026-09-09). A server whose key is
+# missing therefore connects with the literal string "${LEMLIST_API_KEY}" as
+# its credential and fails with a 401 that looks like a bad key rather than an
+# absent one. `pfa doctor` and `pfa mcp` check for exactly this.
+# ---------------------------------------------------------------------------
+version: 1
+
+servers:
+  # --- lemlist -------------------------------------------------------------
+  # Official hosted MCP server. URL, header name and the `bucket` parameter are
+  # from lemlist's own MCP setup page (verified 2026-09-09, docs/verified-facts.md).
+  #
+  # `bucket=prospecting` narrows what the server ADVERTISES to sourcing,
+  # enrichment and lead edits. lemlist documents plainly that this is not an
+  # access control: the always-present `call_api` tool still reaches the rest
+  # of the account. Real restriction is scoping the API key itself, and the
+  # `deny` list below is the second half — see `tools.exclude`.
+  lemlist:
+    enabled: true
+    transport: http
+    url: "https://app.lemlist.com/mcp?bucket=prospecting"
+    headers:
+      X-API-Key: "${LEMLIST_API_KEY}"
+    requires_env: [LEMLIST_API_KEY]
+    description: >-
+      Prospect sourcing, email enrichment and campaign leads. Consumes lemlist
+      credits on enrichment calls.
+    # Sending is a human decision, not an agent one. The agent drafts; a person
+    # reviews and launches in lemlist. This is a posture, not a guarantee:
+    # `call_api` can still reach a send endpoint, which is why the API key
+    # itself should be scoped and why `pfa leads` never sends either.
+    tools:
+      exclude:
+        - "*send_*"
+        - "*_send"
+        - "*launch*"
+        - "*start_campaign*"
+        - "*delete_*"
+    connect_timeout: 30
+    timeout: 120
+
+  # --- filesystem ----------------------------------------------------------
+  # The canonical stdio example from the Hermes MCP guide. Scoped to one
+  # directory on purpose: an MCP filesystem server rooted at / is a shell.
+  filesystem:
+    enabled: true
+    transport: stdio
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "${PFA_WORKSPACE_DIR}"]
+    requires_env: [PFA_WORKSPACE_DIR]
+    description: Read and write files under the agent's workspace directory only.
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT declared here
+#
+# github — Hermes' own docs say GitHub is excluded from their MCP catalogue on
+#   purpose: the hosted GitHub MCP requires each client to bring its own OAuth
+#   app, and Hermes' bundled `github/*` skills driving the `gh` CLI are the more
+#   capable integration. Shipping a GitHub MCP server would be a worse copy of
+#   something the runtime already does better.
+#
+# postgres — the compose stack provisions Postgres for the Phase 4 memory layer,
+#   which does not exist yet. A connector to a database nothing writes to is
+#   surface area with no user. It arrives with the memory layer.
+#
+# An enrichment provider other than lemlist — lemlist's own enrichment covers
+#   email finding and verification, and a second provider means a second
+#   processor to name in the GDPR record for no capability gained. Add one when
+#   a real coverage gap is measured, not before.
+# ---------------------------------------------------------------------------

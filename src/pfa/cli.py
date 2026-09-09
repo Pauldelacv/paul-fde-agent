@@ -18,6 +18,16 @@ from .config import load_config
 from .doctor import FAIL, PASS, SKIP, WARN, run_all, to_json, worst_status
 from .errors import PfaError
 from .hermes import AUTONOMY_LEVELS, DEFAULT_AUTONOMY, hermes_home, render_config, write_config
+from .leads import (
+    Suppression,
+    draft_for,
+    draft_prompt,
+    init_private_dir,
+    load_prospects,
+    preflight,
+    private_dir,
+)
+from .mcp import load_mcp_config
 from .observability import log_dir
 from .router import route
 from .runner import run_task
@@ -250,6 +260,242 @@ def cmd_skills(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """List the declared MCP connectors and whether each can authenticate."""
+    catalogue = load_mcp_config()
+
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {**server.to_dict(), "missing_env": list(server.missing_env())}
+                    for server in catalogue.servers
+                ],
+                indent=2,
+            )
+        )
+        return 0
+
+    if catalogue.source_path is None:
+        print("No config/mcp.yaml — the agent runs without MCP connectors.")
+        return 0
+
+    if not catalogue.servers:
+        print(f"{catalogue.source_path} declares no servers.")
+        return 0
+
+    print(f"MCP connectors: {catalogue.source_path}\n")
+    width = max(len(server.name) for server in catalogue.servers)
+    blocked = 0
+    for server in catalogue.servers:
+        missing = server.missing_env()
+        if not server.enabled:
+            state = "disabled"
+        elif missing:
+            state = f"NEEDS ${', $'.join(missing)}"
+            blocked += 1
+        else:
+            state = "ready"
+        print(f"  {server.name:<{width}}  {server.transport:<5}  {state}")
+        print(f"  {'':<{width}}  {server.target}")
+        if server.description:
+            print(f"  {'':<{width}}  {server.description}")
+        if server.tools_exclude:
+            print(f"  {'':<{width}}  tools excluded: {', '.join(server.tools_exclude)}")
+        print()
+
+    print(
+        f"{len(catalogue.enabled)} enabled of {len(catalogue.servers)} declared. "
+        f"`pfa hermes-config --write` renders them into $HERMES_HOME/config.yaml."
+    )
+    if blocked:
+        # Worth stating plainly: this is the failure that looks like a bad key.
+        print(
+            f"\n{blocked} enabled server(s) have no credential. Hermes passes an unset "
+            f"${{VAR}} through verbatim, so they will fail as rejected credentials "
+            f"rather than as missing ones.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _suppression_path() -> Path:
+    from .leads import SUPPRESSION_FILE
+
+    return private_dir() / SUPPRESSION_FILE
+
+
+def _preflight_or_explain() -> tuple[object, Suppression]:
+    """Load the list and the suppression file together — neither is useful alone."""
+    suppression = Suppression.load(_suppression_path())
+    return preflight(load_prospects(), suppression), suppression
+
+
+def cmd_leads(args: argparse.Namespace) -> int:
+    """Prospect list operations. Nothing here sends anything."""
+    action = getattr(args, "leads_action", "list") or "list"
+
+    if action == "init":
+        prospects, suppression = init_private_dir()
+        print(f"Created {prospects}")
+        print(f"Created {suppression}")
+        print(
+            f"\nBoth are under {private_dir()}, which is gitignored. "
+            f"Replace the example row with real prospects, then run `pfa leads check`."
+        )
+        return 0
+
+    if action == "suppress":
+        suppression = Suppression.load(_suppression_path())
+        added = suppression.add(args.email, args.reason)
+        if added:
+            print(f"{args.email} added to {suppression.path}. They will never be contacted again.")
+        else:
+            print(f"{args.email} was already suppressed. Nothing changed.")
+        return 0
+
+    report, suppression = _preflight_or_explain()
+
+    if action == "check":
+        counts = report.counts()
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "counts": counts,
+                        "suppression_entries": len(suppression.entries),
+                        "duplicates": list(report.duplicates),
+                        "prospects": [
+                            {
+                                "email": entry.prospect.email,
+                                "state": entry.state,
+                                "blockers": list(entry.blockers),
+                                "warnings": list(entry.warnings),
+                            }
+                            for entry in report.entries
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+            return 1 if counts["blocked"] else 0
+
+        print(f"Prospect list: {private_dir() / 'prospects.csv'}")
+        print(f"Suppression:   {suppression.path} — {len(suppression.entries)} entries\n")
+        for entry in report.entries:
+            if entry.state == "ready":
+                continue
+            print(f"  [{entry.state:>10}] line {entry.prospect.row}: {entry.prospect.label}")
+            for problem in (*entry.blockers, *entry.warnings):
+                print(f"               {problem}")
+        for email in report.duplicates:
+            print(f"  [ duplicate] {email} appears more than once")
+        print(
+            f"\n{counts['ready']} ready, {counts['weak']} weak, "
+            f"{counts['blocked']} blocked, {counts['suppressed']} suppressed."
+        )
+        if counts["blocked"]:
+            print(
+                "\nBlocked prospects cannot be drafted for: a missing source or date means "
+                "the Article 14 notice cannot be written. Fix the rows above.",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    if action == "draft":
+        config = load_config(args.config)
+        selected = [
+            entry
+            for entry in report.entries
+            if not args.email or entry.prospect.email == args.email.strip().lower()
+        ]
+        if args.email and not selected:
+            print(f"error: {args.email} is not in the prospect list.", file=sys.stderr)
+            return 2
+
+        skipped = [entry for entry in selected if not entry.draftable]
+        drafting = [entry for entry in selected if entry.draftable][: args.limit]
+
+        for entry in skipped:
+            reason = "on the suppression list" if entry.suppressed else "; ".join(entry.blockers)
+            print(f"[skip] {entry.prospect.label}: {reason}", file=sys.stderr)
+
+        if not drafting:
+            print("Nothing to draft.", file=sys.stderr)
+            return 0 if not skipped else 1
+
+        if args.dry_run:
+            # Deliberately prints the prompt rather than writing a file. A dry
+            # run exists to check the prompt and the routing before a model is
+            # installed; writing a draft with no model output in it would put a
+            # file called "draft" on disk that contains no draft.
+            for entry in drafting:
+                print(f"--- would draft for {entry.prospect.label} ---")
+                print(draft_prompt(entry.prospect))
+                print()
+            print(
+                f"[pfa] dry run — {len(drafting)} prospect(s), no model invoked, nothing written.",
+                file=sys.stderr,
+            )
+            return 0
+
+        written = 0
+        for entry in drafting:
+            path, result = draft_for(
+                entry.prospect,
+                config,
+                suppression=suppression,
+                timeout=args.timeout,
+            )
+            status = "ok" if result.ok else f"FAILED ({result.record.error})"
+            print(f"{path}  [{status}]")
+            written += 1
+
+        print(
+            f"\n{written} draft(s) written under {private_dir() / 'drafts'}. "
+            f"Nothing has been sent — review each one, then send from your outreach tool.",
+            file=sys.stderr,
+        )
+        return 0
+
+    # --- list
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "email": entry.prospect.email,
+                        "name": entry.prospect.name,
+                        "company": entry.prospect.company,
+                        "role": entry.prospect.role,
+                        "state": entry.state,
+                    }
+                    for entry in report.entries
+                ],
+                indent=2,
+            )
+        )
+        return 0
+
+    if not report.entries:
+        print(f"No prospects in {private_dir() / 'prospects.csv'}.")
+        return 0
+
+    width = max(len(entry.prospect.email) for entry in report.entries)
+    print(f"{'EMAIL':<{width}}  {'STATE':<10}  WHO")
+    for entry in report.entries:
+        who = " at ".join(part for part in (entry.prospect.role, entry.prospect.company) if part)
+        print(
+            f"{entry.prospect.email:<{width}}  {entry.state:<10}  "
+            f"{entry.prospect.name or '(no name)'} — {who or '(no role recorded)'}"
+        )
+    counts = report.counts()
+    print(f"\n{len(report.entries)} prospects: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+    return 0
+
+
 def cmd_logs(args: argparse.Namespace) -> int:
     directory = log_dir()
     files = sorted(directory.glob("runs-*.jsonl")) if directory.is_dir() else []
@@ -381,6 +627,97 @@ def build_parser() -> argparse.ArgumentParser:
         "--home", metavar="PATH", help="Hermes home to install into (default: $HERMES_HOME)."
     )
     skills_install.set_defaults(func=cmd_skills, skills_action="install", name=None, json=False)
+
+    # `pfa leads` with no action lists the prospects, mirroring `pfa skills`.
+    leads_cmd = subparsers.add_parser(
+        "leads",
+        help="Prospect list, suppression and outreach drafting. Never sends anything.",
+    )
+    leads_cmd.set_defaults(
+        func=cmd_leads,
+        leads_action="list",
+        json=False,
+        email=None,
+        reason="",
+        limit=None,
+        dry_run=False,
+        timeout=None,
+    )
+    leads_actions = leads_cmd.add_subparsers(dest="leads_action")
+
+    leads_list = leads_actions.add_parser("list", help="List every prospect and its state.")
+    leads_list.add_argument("--json", action="store_true")
+    leads_list.set_defaults(
+        func=cmd_leads,
+        leads_action="list",
+        email=None,
+        reason="",
+        limit=None,
+        dry_run=False,
+        timeout=None,
+    )
+
+    leads_init = leads_actions.add_parser(
+        "init", help="Create the prospect list and suppression file. Never overwrites."
+    )
+    leads_init.set_defaults(
+        func=cmd_leads,
+        leads_action="init",
+        json=False,
+        email=None,
+        reason="",
+        limit=None,
+        dry_run=False,
+        timeout=None,
+    )
+
+    leads_check = leads_actions.add_parser(
+        "check",
+        help="Compliance preflight: suppression, provenance, retention date. Exits 1 if blocked.",
+    )
+    leads_check.add_argument("--json", action="store_true")
+    leads_check.set_defaults(
+        func=cmd_leads,
+        leads_action="check",
+        email=None,
+        reason="",
+        limit=None,
+        dry_run=False,
+        timeout=None,
+    )
+
+    leads_draft = leads_actions.add_parser(
+        "draft", help="Draft one message per prospect, for human review. Sends nothing."
+    )
+    leads_draft.add_argument("--email", help="Draft for one prospect only.")
+    leads_draft.add_argument(
+        "--limit", type=int, default=10, help="Maximum prospects to draft for (default: 10)."
+    )
+    leads_draft.add_argument(
+        "--dry-run", action="store_true", help="Show the prompt; invoke no model, write nothing."
+    )
+    leads_draft.add_argument("--timeout", type=int, default=None, help="Seconds per prospect.")
+    leads_draft.set_defaults(func=cmd_leads, leads_action="draft", json=False, reason="")
+
+    leads_suppress = leads_actions.add_parser(
+        "suppress", help="Add an address to the suppression list. Permanent."
+    )
+    leads_suppress.add_argument("email")
+    leads_suppress.add_argument("--reason", default="", help="Recorded beside the entry.")
+    leads_suppress.set_defaults(
+        func=cmd_leads,
+        leads_action="suppress",
+        json=False,
+        limit=None,
+        dry_run=False,
+        timeout=None,
+    )
+
+    mcp_cmd = subparsers.add_parser(
+        "mcp", help="List the declared MCP connectors and whether each can authenticate."
+    )
+    mcp_cmd.add_argument("--json", action="store_true")
+    mcp_cmd.set_defaults(func=cmd_mcp)
 
     logs = subparsers.add_parser("logs", help="Show recent structured run records.")
     logs.add_argument("--limit", type=int, default=20)

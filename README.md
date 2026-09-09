@@ -6,15 +6,16 @@ model only when the task actually needs one.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-229%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-322%20passing-brightgreen.svg)](tests/)
 
-> **Status: Phases 1–2 complete.** The routing spine, CLI, Hermes integration,
+> **Status: Phases 1–3 complete.** The routing spine, CLI, Hermes integration,
 > Docker deployment, security tooling and test suite work (Phase 1); the FDE
-> skill library — five procedures, attached to task categories by policy,
-> validated and installable — works (Phase 2). MCP connectors, the memory layer
-> and scheduled workflows are Phases 3–5 — see the [Roadmap](#roadmap). Nothing
-> in this README describes a feature that does not exist; where something is
-> planned, it says so.
+> skill library — eight procedures, attached to task categories by policy,
+> validated and installable — works (Phase 2); MCP connectors and the
+> lead-generation vertical work (Phase 3). The memory layer and scheduled
+> workflows are Phases 4–5 — see the [Roadmap](#18-roadmap). Nothing in this README
+> describes a feature that does not exist; where something is planned, it says
+> so, and where a plan was dropped it says that too.
 
 ---
 
@@ -30,7 +31,7 @@ client, memory, cron and approvals. This project supplies the piece Hermes does
 not have: **routing each task to the right model**, plus the FDE-specific
 skills, security posture and operational tooling around it.
 
-Roughly 2,000 lines of Python. That number is a design goal, not an accident.
+Roughly 3,200 lines of Python. That number is a design goal, not an accident.
 
 ## 2. Why it exists
 
@@ -66,7 +67,7 @@ task, use the strong model" layer. That is what this project adds.
         ┌─────────────────────────────────────┼─────────────────────────┐
         ▼                                     ▼                         ▼
    Skills (SKILL.md)                    MCP servers               Memory (Hermes)
-   FDE procedures                  GitHub / Postgres / web        sessions, recall
+   FDE procedures                   lemlist / filesystem         sessions, recall
         │                                     │                         │
         └─────────────────────────────────────┴─────────────────────────┘
                                               │
@@ -90,13 +91,21 @@ alternatives and the trade-off accepted, is in
 
 ## 4. Features
 
-**Working now (Phases 1–2):**
+**Working now (Phases 1–3):**
 
-- **Task-category model routing** — six categories, keyword-classified,
+- **Task-category model routing** — seven categories, keyword-classified,
   overridable, inspectable before a token is spent.
-- **Five FDE skills**, attached to task categories by the policy rather than
+- **A lead-generation agent** — sources and enriches prospects through the
+  lemlist MCP connector, refuses to touch a prospect with no recorded
+  provenance or an objection on file, and writes one personalised draft per
+  person. **It has no send path.** See [Lead generation](#12-lead-generation).
+- **MCP connectors as configuration** — declared in `config/mcp.yaml`,
+  validated, and rendered into the Hermes config with credentials passed
+  through as `${VAR}` references rather than values.
+- **Eight FDE skills**, attached to task categories by the policy rather than
   remembered by hand: debugging methodology, technical research, GitHub
-  workflow, API integration, technical writing.
+  workflow, API integration, technical writing, lead generation, GDPR
+  compliance, outreach writing.
 - **`pfa skills`** — list, inspect, validate and install the library; a mistyped
   `--skill` fails before a token is spent, not silently.
 - **`pfa route`** — shows the decision, its basis *and the procedures it
@@ -105,15 +114,16 @@ alternatives and the trade-off accepted, is in
   reports SKIP rather than PASS for anything it cannot verify.
 - **Four autonomy levels** mapped onto Hermes' real approval controls, with an
   unconditional deny list for irreversible operations.
-- **Structured JSONL run logs** with credential redaction applied before write.
+- **Structured JSONL run logs** with credential redaction applied before write,
+  and no task text — a drafting prompt names a real person.
 - **Docker Compose stack** — agent + Ollama + Postgres, healthchecks, non-root,
-  named volumes.
+  named volumes, and a one-command `make deploy`.
 - **Secret-leak prevention** — layered `.gitignore`, a shape-based scanner, and
   security tests that fail the build.
-- **229 tests**, no network access, no real credentials.
+- **322 tests**, no network access, no real credentials.
 
-**Planned:** MCP connectors, persistent memory, scheduled workflows. See the
-[Roadmap](#roadmap).
+**Planned:** persistent memory, scheduled workflows. See the
+[Roadmap](#18-roadmap).
 
 ## 5. Installation
 
@@ -133,11 +143,12 @@ Requires Python 3.11–3.13 (the range Hermes supports).
 
 ```bash
 make install     # dev dependencies only, no Hermes runtime
-make test        # 229 tests, ~1s, no network
+make test        # 322 tests, ~2s, no network
 make lint        # ruff check + format check
 make check       # everything CI runs
 make doctor
 make skills          # list the skill library
+make mcp             # list the MCP connectors and their credential state
 make secrets-check   # run before every push
 ```
 
@@ -148,12 +159,15 @@ routing, config, redaction and CLI behaviour are all testable in isolation.
 
 ```bash
 cp .env.example .env && chmod 600 .env   # POSTGRES_PASSWORD is mandatory
-make up
-make pull-models
-make ps
+make deploy                              # build, start, pull models, render config, verify
 ```
 
-Full guide, backups and recovery: [docs/deployment.md](docs/deployment.md).
+`make deploy` finishes with `make smoke`, which proves the deployed stack works
+without spending a token: `pfa doctor`, `pfa mcp`, a routing decision, skill
+validation, and a dry run through the whole path.
+
+Needs 12 GB RAM and ~15 GB disk. Full guide, sizing, backups and recovery:
+[docs/deployment.md](docs/deployment.md).
 
 ## 8. Gemma 4 setup
 
@@ -173,8 +187,9 @@ make pull-models          # gemma4:e2b and gemma4:e4b
 | `gemma4:26b` MoE | ~18 GB | ~20 GB | Large instances only |
 | `gemma4:31b` dense | ~20 GB | ~24 GB | GPU, realistically |
 
-The shipped policy routes `debugging` to `gemma4:26b`, which **will be unusably
-slow on a small VPS**. Change that route to `e4b` or to `cloud` — see
+The shipped policy uses `e4b` for every local route, so it runs on the machine
+this project is built to be deployed on. Raise `debugging` to `26b` or send it
+to the cloud if your host can carry it — see
 [docs/deployment.md](docs/deployment.md#sizing).
 
 ## 9. Model routing
@@ -186,10 +201,17 @@ routes:
   simple:         { provider: local, model: "gemma4:e2b", skills: [] }
   summarization:  { provider: local, model: "gemma4:e4b", skills: [technical-writing] }
   research:       { provider: local, model: "gemma4:e4b", skills: [technical-research] }
-  debugging:      { provider: local, model: "gemma4:26b", skills: [fde-methodology] }
+  debugging:      { provider: local, model: "gemma4:e4b", skills: [fde-methodology] }
+  prospecting:    { provider: local, model: "gemma4:e4b", skills: [lead-generation, gdpr-compliance] }
   coding:         { provider: cloud, model: null, skills: [github-workflow] }
   architecture:   { provider: cloud, model: null, skills: [technical-writing] }
 ```
+
+`prospecting` is the one route where the provider is a **compliance** decision
+rather than a cost one. A prospect list is personal data; keeping it on the box
+means there is no processor to contract with and no transfer to document. The
+cost is stated plainly in the policy file: e4b writes weaker copy than a
+frontier model, and changing it is one line with three obligations attached.
 
 `model: null` means the provider's default. `skills:` names the procedures
 preloaded for that category — see [Skills](#11-skills).
@@ -217,24 +239,60 @@ tuned from evidence. See [ADR 0002](docs/adr/0002-model-routing.md).
 
 ## 10. MCP
 
-Hermes is MCP-native: servers are declared under `mcp_servers` in
-`$HERMES_HOME/config.yaml`, over stdio, HTTP or OAuth 2.1. Adding one:
+Hermes owns the MCP client — transports, discovery, filtering, OAuth. This
+project owns the **policy**: which servers the agent may reach, which of their
+tools it may see, and which credential each one needs. That lives in
+`config/mcp.yaml` and is rendered into `mcp_servers` by
+`pfa hermes-config --write`.
 
 ```yaml
-mcp_servers:
-  filesystem:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/srv/work"]
+servers:
+  lemlist:
+    transport: http
+    url: "https://app.lemlist.com/mcp?bucket=prospecting"
+    headers:
+      X-API-Key: "${LEMLIST_API_KEY}"
+    requires_env: [LEMLIST_API_KEY]
+    tools:
+      exclude: ["*send_*", "*launch*", "*delete_*"]
 ```
 
-or `hermes mcp add <name>`.
+```console
+$ pfa mcp
+  lemlist     http   ready
+              https://app.lemlist.com/mcp?bucket=prospecting
+              Prospect sourcing, email enrichment and campaign leads. …
+  filesystem  stdio  NEEDS $PFA_WORKSPACE_DIR
+```
 
-**Phases 1–2 ship no MCP connectors and no custom server.** The existing GitHub,
-Postgres and filesystem servers already do the job, and writing wrappers around
-them would be exactly the premature abstraction this project is trying to avoid.
-Phase 3 adds the connector configuration and one minimal custom server built to
-demonstrate the protocol end to end. Until then, this section describes Hermes'
-capability, not ours.
+**The credential is never expanded here.** `${VAR}` survives into
+`$HERMES_HOME/config.yaml` so Hermes resolves it at connect time, which keeps the
+rendered file safe to read, diff and back up. A test sets a real-looking key in
+the environment and asserts it does not appear in the output.
+
+That passthrough has a documented failure mode worth knowing about: **Hermes
+keeps an unset `${VAR}` verbatim and only logs a warning**, so a connector with
+no key does not fail to start — it authenticates with the literal text
+`${LEMLIST_API_KEY}` and gets a 401 that reads like a revoked key. Two guards:
+`pfa doctor` and `pfa mcp` report it before a connection is attempted, and the
+loader refuses any server referencing a variable it has not declared in
+`requires_env`.
+
+### What is deliberately not here
+
+**No custom MCP server.** Earlier plans promised one "to demonstrate the
+protocol end to end". lemlist publishes a hosted MCP server, so connecting to it
+is a URL and a header; writing our own to sit in front of it would add a process
+to run and a protocol to keep current, in exchange for nothing. The promise is
+withdrawn rather than deferred — see [ADR 0006](docs/adr/0006-mcp-connectors.md).
+
+**No GitHub connector.** Hermes' own documentation says GitHub is excluded from
+its catalogue deliberately, because its bundled `github/*` skills driving the
+`gh` CLI are the better integration.
+
+**No Postgres connector yet.** The compose stack provisions Postgres for the
+Phase 4 memory layer. A connector to a database nothing writes to is surface
+area with no user; it arrives with the memory layer.
 
 ## 11. Skills
 
@@ -246,7 +304,7 @@ layout is Hermes' own, so nothing here is a project-specific dialect:
 skills/<category>/<name>/SKILL.md
 ```
 
-**Five ship today** ([library README](skills/README.md)):
+**Eight ship today** ([library README](skills/README.md)):
 
 | Skill | What it is for | Attached to |
 |---|---|---|
@@ -255,6 +313,9 @@ skills/<category>/<name>/SKILL.md
 | [`github-workflow`](skills/fde/github-workflow/SKILL.md) | Working in a repository that is not yours: conventions, branches, PRs, review | `coding` |
 | [`api-integration`](skills/fde/api-integration/SKILL.md) | Third-party APIs: contract vs. observed behaviour, error taxonomy, idempotency, webhooks | explicit only |
 | [`technical-writing`](skills/fde/technical-writing/SKILL.md) | Client summaries, decision records, handovers a non-specialist can act on | `summarization`, `architecture` |
+| [`lead-generation`](skills/fde/lead-generation/SKILL.md) | ICP to sourcing to enrichment to verified, researched drafts — with the compliance gate built into the pipeline | `prospecting` |
+| [`gdpr-compliance`](skills/fde/gdpr-compliance/SKILL.md) | Legal basis, Article 14 notice, rights, retention, processors and transfers — a procedure, explicitly not legal advice | `prospecting` |
+| [`outreach-writing`](skills/fde/outreach-writing/SKILL.md) | A cold message a specific person would answer: evidence-based personalisation, one ask, no invented familiarity | explicit only |
 
 Every one inherits the same rule: **label each statement** — FACT, HYPOTHESIS,
 CONCLUSION, ACTION TAKEN, ACTION RECOMMENDED — and never promote a hypothesis to
@@ -313,18 +374,84 @@ listed. The alternative is a session that quietly runs without the procedure it
 was supposed to follow, which is the same failure the procedures exist to
 prevent.
 
-## 12. Memory
+## 12. Lead generation
+
+The first vertical this agent was pointed at, and the one that most needed the
+rest of the project to already exist. Full guide:
+[docs/lead-generation.md](docs/lead-generation.md).
+
+It sources and enriches prospects through the lemlist MCP connector, checks each
+one against the suppression list and the record-keeping rules, and writes one
+personalised draft per person for review.
+
+```bash
+pfa leads init                  # create the prospect list and suppression file
+pfa leads                       # the list, with each prospect's state
+pfa leads check                 # compliance preflight; exits 1 if anything is blocked
+pfa leads draft --limit 5       # one draft per prospect, for review
+pfa leads suppress x@example.com --reason "replied stop"
+```
+
+```console
+$ pfa leads check
+Prospect list: private/prospects.csv
+Suppression:   private/suppression.txt — 1 entries
+
+  [   blocked] line 8: Grace Hopper (Example Systems)
+               no `source` — Article 14 requires telling them where data came from
+  [suppressed] line 9: Alan Turing (Example Secure)
+
+1 ready, 0 weak, 1 blocked, 1 suppressed.
+```
+
+### Three properties, all asserted by tests
+
+**It cannot send.** There is no send path in `src/pfa/leads.py` — not a disabled
+one, not one behind a flag, not one gated on an autonomy level. The module
+imports no HTTP client and no `smtplib`, and a test asserts it. This is the same
+reasoning as the autonomy levels, applied harder: the reliable way to guarantee
+an agent does not send email is for it to have no way to send email. You review
+each draft and send it yourself.
+
+**Prospect data does not leave the machine.** `routes.prospecting` is pinned to
+the local model, which is why a prospect list has no processor to contract with
+under Article 28 and no transfer to document under Article 46. This is the one
+route where the provider is a compliance decision, and the cost — weaker copy
+from e4b — is stated rather than hidden.
+
+**A prospect with no provenance is refused, not warned about.** No `source` or
+no `collected_at` means the Article 14 notice cannot be written, so the row
+describes a person who cannot lawfully be contacted. A missing `trigger` is only
+a warning: a weak message is a quality problem you may knowingly accept. The
+distinction is the fact/hypothesis discipline in another form.
+
+### What it does not do
+
+- **Verify addresses.** That is lemlist's enrichment through the connector. The
+  check in `pfa leads` is a shape check for a mangled CSV cell — a regular
+  expression has never established that an address exists.
+- **Decide your legal basis.** `gdpr-compliance` says what to establish and
+  record, and escalates what it cannot answer. It is a procedure, not legal
+  advice.
+- **Track opens.** Unreliable, and itself a processing activity you would have
+  to justify. Judge the targeting by replies.
+- **Manage campaigns.** Sequences and sending live in lemlist, operated by a
+  person.
+
+Reasoning in full: [ADR 0007](docs/adr/0007-lead-generation.md).
+
+## 13. Memory
 
 Hermes provides persistent cross-session memory, FTS5 session search with LLM
 summarisation, and agent-curated recall. It lives in `$HERMES_HOME`, which is a
 Docker volume in the deployed stack.
 
-**Phases 1–2 do not extend it.** The project-scoped, inspectable, exportable
+**Nothing here extends it yet.** The project-scoped, inspectable, exportable
 memory model — working / episodic / semantic / project — is Phase 4, and needs
 the Postgres service the compose file already provisions. Today, memory is
 whatever Hermes gives you.
 
-## 13. Security
+## 14. Security
 
 This repository is public and the agent executes model-generated commands. Both
 facts are taken seriously.
@@ -352,10 +479,17 @@ destructive action**, and **no level disables approvals**. An unconditional deny
 list covers `rm -rf /`, `DROP DATABASE`, `git push --force`, `terraform destroy`
 and similar, refused before any approval mode is consulted.
 
+**Personal data:** the lead-generation vertical processes data about named
+living people, so its controls are structural rather than procedural — no send
+path in the code, prospect data pinned to the local model, suppression checked
+before anything else and re-checked at the point of drafting, and run records
+that carry no task text because a drafting prompt names someone. Details and
+their limits: [docs/security.md](docs/security.md#personal-data-and-the-agent-that-touches-it).
+
 **Prompt injection is not solved** — no honest agent project claims otherwise.
 The mitigations and their limits are set out in [docs/security.md](docs/security.md).
 
-## 14. Scheduled workflows
+## 15. Scheduled workflows
 
 Hermes has a built-in cron scheduler: jobs in `~/.hermes/cron/jobs.json`, skills
 attachable per job, results deliverable to multiple targets.
@@ -365,11 +499,15 @@ hermes cron create "0 8 * * *" "Prepare my morning FDE briefing" --skill fde-met
 ```
 
 **Phase 5** adds the morning briefing, weekly AI research and prospect
-monitoring workflows on top of it. Prospect and client lists are configuration,
-never repository content — `prospects.*` and `clients/` are gitignored and a
-test asserts they stay untracked.
+monitoring workflows on top of it. The prospecting pieces those workflows need
+now exist — `pfa leads check` and `pfa leads draft` are the commands a cron job
+would call, and both are safe to run unattended because neither sends anything.
 
-## 15. Examples
+Prospect and client lists are configuration, never repository content:
+`private/`, `prospects.*`, `suppression.txt`, `drafts/` and `clients/` are
+gitignored, and tests assert they stay untracked.
+
+## 16. Examples
 
 ```bash
 # See where a task would go, and why — costs nothing
@@ -383,6 +521,11 @@ pfa run --task architecture "Should we put a queue between these two services?"
 
 # The debugging route already attaches fde-methodology; add the API procedure
 pfa run --skill api-integration "Debug this API integration"
+
+# Prospecting: find people, then draft for them. Never sends.
+pfa run "Define an ICP for companies that would buy a self-hosted GDPR-compliant agent"
+pfa leads check                             # compliance preflight before anything runs
+pfa leads draft --limit 5                   # one draft per prospect, for review
 
 # See what the library holds and where each procedure attaches
 pfa skills
@@ -398,6 +541,7 @@ Configuration and diagnostics:
 
 ```bash
 pfa config                                  # resolved policy; never prints a key
+pfa mcp                                     # connectors, and which cannot authenticate
 pfa doctor --json                           # machine-readable health
 pfa autonomy                                # explain the four levels
 pfa skills validate                         # fail the build on a malformed skill
@@ -405,16 +549,19 @@ pfa skills install                          # copy the library where the repo is
 pfa hermes-config --autonomy read --write   # render $HERMES_HOME/config.yaml
 ```
 
-## 16. Development
+## 17. Development
 
 ```
-src/pfa/         config, router, skills, hermes integration, runner, observability, doctor, cli
-config/          routing.yaml — the whole policy
-skills/          agentskills.io-format procedures (5, one per FDE work type)
+src/pfa/         config, router, skills, mcp, leads, hermes integration, runner,
+                 observability, doctor, cli
+config/          routing.yaml — the model policy; mcp.yaml — the connector policy
+skills/          agentskills.io-format procedures (8, one per FDE work type)
 docker/          Dockerfile + compose stack
-docs/            architecture, security, deployment, verified-facts, ADRs
-tests/           229 tests: config, routing, skills, hermes, runner, observability, security, CLI
+docs/            architecture, security, deployment, lead-generation, verified-facts, ADRs
+tests/           322 tests: config, routing, skills, mcp, leads, hermes, runner,
+                 observability, security, CLI
 scripts/         check-secrets.sh
+private/         prospect lists, suppression, drafts — gitignored, never committed
 ```
 
 **One runtime dependency: `PyYAML`.** argparse instead of click, a hand-written
@@ -430,21 +577,21 @@ choice, and the trade-off accepted.
 ### On verification
 
 Every external claim — Hermes version numbers, config schema, CLI flags, Gemma 4
-sizes — is recorded with its source and check date in
-[docs/verified-facts.md](docs/verified-facts.md).
+sizes, the lemlist API and its MCP server — is recorded with its source and check
+date in [docs/verified-facts.md](docs/verified-facts.md).
 
 Notably: **the brief for this project specified "Hermes Agent 2.x", which does
 not exist.** The project is at v0.21.0 (PyPI publishes 0.19.0). This repository
 targets 0.19–0.21 and says so rather than quietly inventing a version.
 
-## 17. Roadmap
+## 18. Roadmap
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Foundation — structure, config, Docker, Hermes integration, local models, healthcheck, CLI | **Complete** |
 | 2 | FDE skills — debugging, research, GitHub, API integration, technical writing; policy-driven attachment, validation, install | **Complete** |
-| 3 | MCP — GitHub, Postgres, filesystem, web research, one custom server | Next |
-| 4 | Memory — persistent, project-scoped, episodic, retrieval | Planned |
+| 3 | MCP connectors as validated configuration; lead generation — lemlist sourcing and enrichment, compliance preflight, draft-only outreach | **Complete** |
+| 4 | Memory — persistent, project-scoped, episodic, retrieval | Next |
 | 5 | Automation — morning briefing, research reports, prospect monitoring | Planned |
 | 6 | Routing — cost tracking from real token counts, smarter classification | Planned |
 | 7 | Production — reverse proxy, secret management, backups, monitoring | Planned |
@@ -485,12 +632,22 @@ routing policy, so the debugging route loads the debugging method without anyone
 typing it. The day you most need the checklist is the day you are least likely to
 reach for it.
 
+**Put the constraint where it is structural.** The prospecting agent cannot
+send email, because the module has no HTTP client — not because a flag is off.
+The same instinct as the autonomy levels: prefer the control that cannot be
+argued past to the one that merely looks like it works.
+
+**Withdraw a plan when it stops being right.** The roadmap promised a custom MCP
+server. lemlist publishes one, so building a wrapper would have added a process
+to run for no capability gained. The promise is marked withdrawn rather than
+quietly dropped or shipped to satisfy a plan.
+
 **Make cost and risk visible.** Every run is logged with model, duration and
 status. Every credential path is scanned before it can be pushed. Both are
 things a client eventually asks about.
 
 **Leave something maintainable.** One runtime dependency, ADRs for every real
-decision, and 229 tests that run in a second without network or credentials.
+decision, and 322 tests that run in a second without network or credentials.
 The measure of an FDE engagement is what still works after you leave.
 
 ---

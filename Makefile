@@ -3,6 +3,7 @@
 
 SHELL := /bin/bash
 COMPOSE := docker compose -f docker/docker-compose.yml
+AGENT := $(COMPOSE) exec -T agent
 PY := python3
 
 .DEFAULT_GOAL := help
@@ -52,6 +53,10 @@ skills-validate: ## Fail if any skill is malformed
 skills-install: ## Copy the skill library into $$HERMES_HOME/skills
 	$(PY) -m pfa.cli skills install
 
+.PHONY: mcp
+mcp: ## List the MCP connectors and whether each one can authenticate
+	$(PY) -m pfa.cli mcp
+
 .PHONY: check
 check: lint test skills-validate ## Everything CI runs
 
@@ -91,3 +96,48 @@ pull-models: ## Pull the local Gemma 4 models the routing policy references
 .PHONY: hermes-config
 hermes-config: ## Render $HERMES_HOME/config.yaml from the routing policy
 	$(PY) -m pfa.cli hermes-config --write
+
+.PHONY: deploy
+deploy: ## Full VPS bring-up: build, start, pull models, render config, healthcheck
+	@test -f .env || { echo "No .env. Run: cp .env.example .env && chmod 600 .env"; exit 1; }
+	$(COMPOSE) up -d --build
+	$(MAKE) pull-models
+	$(AGENT) pfa hermes-config --write
+	$(MAKE) smoke
+
+.PHONY: smoke
+smoke: ## Prove the deployed stack works, without spending a token
+	@echo "--- health ---"      && $(AGENT) pfa doctor        || true
+	@echo "--- connectors ---"  && $(AGENT) pfa mcp           || true
+	@echo "--- routing ---"     && $(AGENT) pfa route "Find prospects and draft a cold email"
+	@echo "--- skills ---"      && $(AGENT) pfa skills validate
+	@echo "--- run (no model invoked) ---" && $(AGENT) pfa run --dry-run "Prepare my morning FDE briefing"
+
+# --- lead generation -------------------------------------------------------
+# Prospect data lives on the agent-data volume, not in this repository. These
+# targets move it in and out rather than bind-mounting it, because the
+# container runs as uid 10001 and a host directory owned by anyone else is
+# unwritable in a way Docker reports only at the moment of the first write.
+
+.PHONY: leads-init
+leads-init: ## Create the prospect list and suppression file inside the container
+	$(AGENT) pfa leads init
+
+.PHONY: leads-pull
+leads-pull: ## Copy prospect data and drafts OUT of the container into ./private
+	@mkdir -p private
+	$(COMPOSE) cp agent:/data/private/. ./private/
+	@echo "Pulled into ./private — PERSONAL DATA, gitignored. Do not commit it."
+
+.PHONY: leads-push
+leads-push: ## Copy ./private back INTO the container after editing
+	$(COMPOSE) cp ./private/. agent:/data/private/
+	$(AGENT) pfa leads check
+
+.PHONY: leads-check
+leads-check: ## Compliance preflight on the deployed prospect list
+	$(AGENT) pfa leads check
+
+.PHONY: leads-draft
+leads-draft: ## Draft outreach for every ready prospect. Sends nothing.
+	$(AGENT) pfa leads draft

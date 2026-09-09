@@ -29,6 +29,9 @@ hermes-home/
 *.sqlite3
 
 # Private operational data (prospects, clients, briefings)
+# `private/` is where `pfa leads` keeps everything. The individual names below
+# are defence in depth: a prospect list saved to the repository root by hand is
+# still personal data, and the mistake is easy to make once.
 private/
 var/
 data/
@@ -37,6 +40,9 @@ logs/
 briefings/
 prospects.yaml
 prospects.yml
+prospects.csv
+suppression.txt
+drafts/
 clients/
 
 # Python
